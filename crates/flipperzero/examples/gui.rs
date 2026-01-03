@@ -11,7 +11,7 @@
 extern crate flipperzero_rt;
 
 // Required for allocator
-#[cfg(feature = "alloc")]
+#[cfg(miri)]
 extern crate flipperzero_alloc;
 
 use core::ffi::{CStr, c_void};
