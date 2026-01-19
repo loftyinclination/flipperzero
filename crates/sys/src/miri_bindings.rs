@@ -6,6 +6,7 @@ mod input;
 mod kernel;
 mod string;
 mod thread;
+mod utils;
 mod version;
 
 pub use event::*;
