@@ -5,6 +5,8 @@ use flipperzero_sys as sys;
 use flipperzero_sys::furi::UnsafeRecord;
 
 pub mod beacon;
+#[cfg(feature = "alloc")]
+pub mod profile;
 pub mod test_patterns;
 
 /// Returns `true` if core2 (which runs Bluetooth) is alive.
@@ -47,5 +49,13 @@ impl Bluetooth {
             sys::bt_disconnect(bt.as_ptr());
             Self { bt }
         }
+    }
+
+    /// Obtain raw pointer to Bluetooth service.
+    ///
+    /// This pointer must not be free'd or used after the Bluetooth object has been dropped.
+    #[inline]
+    pub fn as_ptr(&self) -> *mut sys::Bt {
+        self.bt.as_ptr()
     }
 }
