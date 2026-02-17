@@ -47,11 +47,9 @@ impl Drop for Bluetooth {
 impl Bluetooth {
     /// Obtains a handle to the Bluetooth service.
     pub(crate) fn open() -> Self {
-        unsafe {
-            let bt = UnsafeRecord::open(c"bt");
-            sys::bt_disconnect(bt.as_ptr());
-            Self { bt }
-        }
+        let bt = unsafe { UnsafeRecord::open(c"bt") };
+        unsafe { sys::bt_disconnect(bt.as_ptr()) };
+        Self { bt }
     }
 
     /// Obtain raw pointer to Bluetooth service.
