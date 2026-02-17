@@ -1,5 +1,6 @@
 #![allow(unused_variables)]
 
+mod bluetooth;
 mod event;
 mod gui;
 mod input;
@@ -12,6 +13,7 @@ mod version;
 
 pub extern crate alloc;
 
+pub use bluetooth::*;
 pub use event::*;
 pub use gui::*;
 pub use input::*;

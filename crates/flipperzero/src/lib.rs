@@ -16,7 +16,6 @@
 #[cfg_attr(docsrs, doc(cfg(feature = "alloc")))]
 extern crate alloc;
 
-#[cfg(not(miri))]
 pub mod bluetooth;
 #[cfg(not(miri))]
 pub mod datetime;

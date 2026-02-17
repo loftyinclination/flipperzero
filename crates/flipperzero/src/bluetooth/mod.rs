@@ -1,6 +1,8 @@
 //! Bluetooth APIs for the Flipper Zero
 
-use crate::{error, furi::string::FuriString};
+use crate::error;
+#[cfg(not(miri))]
+use crate::furi::string::FuriString;
 use flipperzero_sys as sys;
 use flipperzero_sys::furi::UnsafeRecord;
 
@@ -22,6 +24,7 @@ pub fn is_active() -> bool {
 }
 
 /// Returns a string containing the BT/BLE system component state.
+#[cfg(not(miri))]
 pub fn dump_state() -> FuriString {
     let mut buffer = FuriString::new();
     unsafe { sys::furi_hal_bt_dump_state(buffer.as_mut_ptr()) }
