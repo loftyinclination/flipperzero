@@ -112,6 +112,9 @@ name = "bluetooth-beacon"
 required-features = ["not-miri"]
 
 [[example]]
+name = "bluetooth-profile"
+
+[[example]]
 name = "dialog"
 required-features = ["alloc", "not-miri"]
 
