@@ -1,14 +1,18 @@
 use crate::{bluetooth::Bluetooth, furi::sync::Mutex};
 use alloc::boxed::Box;
-use core::{cell::OnceCell, ffi::c_void, marker::PhantomData, ptr};
+use core::{cell::OnceCell, ffi::c_void, ptr};
 use flipperzero_sys::{self as sys, FuriHalBleProfileBase, GapConfig};
 
 pub struct Profile<'a, C: BleProfileCallbacks> {
     context: ProfileSetupContext<C>,
-    _phantom: PhantomData<&'a Bluetooth>,
+    bluetooth: &'a Bluetooth,
 }
 
 impl<'a, C: BleProfileCallbacks + 'static> Profile<'a, C> {
+    /// Change the current Bluetooth LE profile.
+    ///
+    /// This stops any currently running profile, restarts the STM32's Core2, and starts the new
+    /// profile.
     pub fn new(callbacks: C, bluetooth: &'a Bluetooth) -> Self {
         let profile_template = Self::get_profile_template();
         let context = ProfileSetupContext {
@@ -27,10 +31,7 @@ impl<'a, C: BleProfileCallbacks + 'static> Profile<'a, C> {
             .is_null()
         );
 
-        Self {
-            context,
-            _phantom: PhantomData,
-        }
+        Self { context, bluetooth }
     }
 
     /// Creates or fetches the profile template.
@@ -101,7 +102,7 @@ impl<'a, C: BleProfileCallbacks + 'static> Profile<'a, C> {
 
 impl<'a, C: BleProfileCallbacks> Drop for Profile<'a, C> {
     fn drop(&mut self) {
-        todo!()
+        unsafe { sys::bt_disconnect(self.bluetooth.as_ptr()) };
     }
 }
 
