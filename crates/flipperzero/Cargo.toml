@@ -108,7 +108,7 @@ harness = false
 required-features = ["not-miri"]
 
 [[example]]
-name = "bluetooth"
+name = "bluetooth-beacon"
 required-features = ["not-miri"]
 
 [[example]]
