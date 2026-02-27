@@ -32,7 +32,7 @@ pub fn dump_state() -> FuriString {
 }
 
 /// A handle to the Bluetooth service.
-pub(crate) struct Bluetooth {
+pub struct Bluetooth {
     bt: UnsafeRecord<sys::Bt>,
 }
 
@@ -46,7 +46,7 @@ impl Drop for Bluetooth {
 
 impl Bluetooth {
     /// Obtains a handle to the Bluetooth service.
-    pub(crate) fn open() -> Self {
+    pub fn open() -> Self {
         let bt = unsafe { UnsafeRecord::open(c"bt") };
         unsafe { sys::bt_disconnect(bt.as_ptr()) };
         Self { bt }
