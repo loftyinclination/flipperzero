@@ -44,9 +44,11 @@ impl<'bluetooth, 'profile, PC: BleProfileCallbacks, BEC: BleEventCallbacks>
 
             match EventPacket::from_hci_bytes_complete(event) {
                 Ok(event_packet) => match context.handle_event(event_packet) {
-                    Ok(EventBubbling::Consumed) => sys::BleEventAckFlowDisable,
-                    Ok(EventBubbling::ReturnForAdditionalProcessing) => sys::BleEventAckFlowEnable,
-                    Err(_) => sys::BleEventNotAck,
+                    // NOTE: we don't send out BleEventAckFlowDisable commands because that just
+                    // tells the stm32_copro firmware to wait before sending the data again, which
+                    // means we'd just end up back here.
+                    EventBubbling::Consumed => sys::BleEventAckFlowEnable,
+                    EventBubbling::ReturnForAdditionalProcessing => sys::BleEventNotAck,
                 },
                 Err(error) => {
                     match error {
@@ -97,5 +99,5 @@ pub trait BleEventCallbacks: Send {
     /// Callback to invoke when a BLE event is received.
     ///
     /// Note: this will be invoked on the BLE GAP service thread.
-    fn handle_event(&mut self, event_packet: EventPacket) -> Result<EventBubbling, ()>;
+    fn handle_event(&mut self, event_packet: EventPacket) -> EventBubbling;
 }
