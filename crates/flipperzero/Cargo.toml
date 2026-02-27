@@ -113,6 +113,7 @@ required-features = ["not-miri"]
 
 [[example]]
 name = "bluetooth-profile"
+required-features = ["alloc"]
 
 [[example]]
 name = "dialog"
