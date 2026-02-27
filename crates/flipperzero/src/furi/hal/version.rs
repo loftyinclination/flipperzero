@@ -138,6 +138,9 @@ pub fn device_name() -> &'static CStr {
 }
 
 /// BLE local device name.
+///
+/// The first byte of this string contains the [Bluetooth LE AD Type ID for the local
+/// name](`bt_hci::uuid::ad_types::COMPLETE_LOCAL_NAME`); the actual UTF-8 string starts at byte 1.
 pub fn ble_local_device_name() -> &'static CStr {
     unsafe { CStr::from_ptr(sys::furi_hal_version_get_ble_local_device_name_ptr()) }
 }
