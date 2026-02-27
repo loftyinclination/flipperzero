@@ -1,21 +1,21 @@
-use crate::bluetooth::Bluetooth;
+use crate::bluetooth::profile::{BleProfileCallbacks, Profile};
 use crate::error;
 use bt_hci::FromHciBytes;
 use bt_hci::event::EventPacket;
-use core::{ffi::c_void, marker::PhantomData, ptr::NonNull};
+use core::{ffi::c_void, ptr::NonNull};
 use flipperzero_sys as sys;
 use sys::BleEventAckStatus;
 
-pub struct EventHandler<'a, C: BleEventCallbacks> {
+pub struct EventHandler<'bluetooth, 'profile, PC: BleProfileCallbacks, BEC: BleEventCallbacks> {
     handler: NonNull<flipperzero_sys::GapEventHandler>,
-    callbacks: C,
-    _phantom: PhantomData<&'a Bluetooth>,
+    profile: &'profile Profile<'bluetooth, PC>,
+    callbacks: BEC,
 }
 
-impl<'a, C: BleEventCallbacks> EventHandler<'a, C> {
-    // TODO: require that EventHandler only be instantiated or live for as long as a profile is
-    // running
-    fn subscribe(_bluetooth: &'a Bluetooth, mut callbacks: C) -> Self {
+impl<'bluetooth, 'profile, PC: BleProfileCallbacks, BEC: BleEventCallbacks>
+    EventHandler<'bluetooth, 'profile, PC, BEC>
+{
+    pub fn subscribe(profile: &'profile Profile<'bluetooth, PC>, mut callbacks: BEC) -> Self {
         unsafe extern "C" fn dispatch_ble_event<C: BleEventCallbacks>(
             event: *mut c_void,
             context: *mut c_void,
@@ -64,7 +64,7 @@ impl<'a, C: BleEventCallbacks> EventHandler<'a, C> {
 
         let handler = unsafe {
             sys::ble_event_dispatcher_register_svc_handler(
-                Some(dispatch_ble_event::<C>),
+                Some(dispatch_ble_event::<BEC>),
                 &raw mut callbacks as *mut _,
             )
         };
@@ -73,13 +73,15 @@ impl<'a, C: BleEventCallbacks> EventHandler<'a, C> {
 
         Self {
             handler,
+            profile,
             callbacks,
-            _phantom: PhantomData,
         }
     }
 }
 
-impl<'a, C: BleEventCallbacks> Drop for EventHandler<'a, C> {
+impl<'bluetooth, 'profile, PC: BleProfileCallbacks, BEC: BleEventCallbacks> Drop
+    for EventHandler<'bluetooth, 'profile, PC, BEC>
+{
     fn drop(&mut self) {
         unsafe { sys::ble_event_dispatcher_unregister_svc_handler(self.handler.as_ptr()) }
     }
@@ -91,6 +93,9 @@ pub enum EventBubbling {
     ReturnForAdditionalProcessing,
 }
 
-trait BleEventCallbacks {
+pub trait BleEventCallbacks: Send {
+    /// Callback to invoke when a BLE event is received.
+    ///
+    /// Note: this will be invoked on the BLE GAP service thread.
     fn handle_event(&mut self, event_packet: EventPacket) -> Result<EventBubbling, ()>;
 }

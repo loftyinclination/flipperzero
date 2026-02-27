@@ -8,7 +8,6 @@ use flipperzero_sys::furi::UnsafeRecord;
 
 pub mod beacon;
 pub mod handler;
-#[cfg(feature = "alloc")]
 pub mod profile;
 pub mod test_patterns;
 

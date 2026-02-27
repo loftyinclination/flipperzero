@@ -1,4 +1,5 @@
 use crate::{bluetooth::Bluetooth, furi::sync::Mutex};
+#[cfg(feature = "alloc")]
 use alloc::boxed::Box;
 use core::{cell::OnceCell, ffi::c_void, ptr};
 use flipperzero_sys::{self as sys, FuriHalBleProfileBase, GapConfig};
@@ -8,6 +9,7 @@ pub struct Profile<'a, C: BleProfileCallbacks> {
     bluetooth: &'a Bluetooth,
 }
 
+#[cfg(feature = "alloc")]
 impl<'a, C: BleProfileCallbacks + 'static> Profile<'a, C> {
     /// Change the current Bluetooth LE profile.
     ///
