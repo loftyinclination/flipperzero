@@ -219,6 +219,10 @@ impl<'gui, VDC: ViewDispatcherCallbacks> SubmenuBoundToViewDispatcher<'gui, VDC>
             index,
         }
     }
+
+    pub fn switch_to_view(&self) -> () {
+        self.view.switch_to_view();
+    }
 }
 
 #[cfg(feature = "alloc")]
