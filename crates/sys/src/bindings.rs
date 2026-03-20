@@ -166,7 +166,7 @@ impl<T> ::core::fmt::Debug for __IncompleteArrayField<T> {
         fmt.write_str("__IncompleteArrayField")
     }
 }
-pub const API_VERSION: u32 = 5701633;
+pub const API_VERSION: u32 = 5701636;
 pub const LFRFID_T5577_BLOCK_COUNT: u32 = 8;
 pub const LFRFID_T5577_POR_DELAY: u32 = 1;
 pub const LFRFID_T5577_ST_TERMINATOR: u32 = 8;
@@ -752,15 +752,15 @@ unsafe extern "C" {
     pub fn strlcat(
         arg1: *mut core::ffi::c_char,
         arg2: *const core::ffi::c_char,
-        arg3: core::ffi::c_uint,
-    ) -> core::ffi::c_uint;
+        arg3: usize,
+    ) -> usize;
 }
 unsafe extern "C" {
     pub fn strlcpy(
         arg1: *mut core::ffi::c_char,
         arg2: *const core::ffi::c_char,
-        arg3: core::ffi::c_uint,
-    ) -> core::ffi::c_uint;
+        arg3: usize,
+    ) -> usize;
 }
 unsafe extern "C" {
     pub static _ctype_: [core::ffi::c_char; 0usize];
@@ -1620,7 +1620,7 @@ unsafe extern "C" {
     pub fn furi_mutex_free(instance: *mut FuriMutex);
 }
 unsafe extern "C" {
-    #[doc = "Acquire mutex\n\n # Arguments\n\n* `instance` - The pointer to FuriMutex instance\n * `timeout` (direction in) - The timeout\n\n # Returns\n\nThe furi status."]
+    #[doc = "Acquire mutex\n\n # Arguments\n\n* `instance` - The pointer to FuriMutex instance\n * `timeout` (direction in) - The timeout, in ticks.\n\n # Returns\n\nThe furi status."]
     pub fn furi_mutex_acquire(instance: *mut FuriMutex, timeout: u32) -> FuriStatus;
 }
 unsafe extern "C" {
@@ -5172,6 +5172,7 @@ pub struct GapConfig {
     pub adv_service: GapConfig__bindgen_ty_1,
     pub mfg_data: [u8; 23usize],
     pub mfg_data_len: u8,
+    pub role: u8,
     pub appearance_char: u16,
     pub bonding_mode: bool,
     pub pairing_method: GapPairing,
@@ -5201,7 +5202,7 @@ const _: () = {
 };
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
-    ["Size of GapConfig"][::core::mem::size_of::<GapConfig>() - 80usize];
+    ["Size of GapConfig"][::core::mem::size_of::<GapConfig>() - 82usize];
     ["Alignment of GapConfig"][::core::mem::align_of::<GapConfig>() - 2usize];
     ["Offset of field: GapConfig::adv_service"]
         [::core::mem::offset_of!(GapConfig, adv_service) - 0usize];
@@ -5209,18 +5210,19 @@ const _: () = {
         [::core::mem::offset_of!(GapConfig, mfg_data) - 20usize];
     ["Offset of field: GapConfig::mfg_data_len"]
         [::core::mem::offset_of!(GapConfig, mfg_data_len) - 43usize];
+    ["Offset of field: GapConfig::role"][::core::mem::offset_of!(GapConfig, role) - 44usize];
     ["Offset of field: GapConfig::appearance_char"]
-        [::core::mem::offset_of!(GapConfig, appearance_char) - 44usize];
+        [::core::mem::offset_of!(GapConfig, appearance_char) - 46usize];
     ["Offset of field: GapConfig::bonding_mode"]
-        [::core::mem::offset_of!(GapConfig, bonding_mode) - 46usize];
+        [::core::mem::offset_of!(GapConfig, bonding_mode) - 48usize];
     ["Offset of field: GapConfig::pairing_method"]
-        [::core::mem::offset_of!(GapConfig, pairing_method) - 47usize];
+        [::core::mem::offset_of!(GapConfig, pairing_method) - 49usize];
     ["Offset of field: GapConfig::mac_address"]
-        [::core::mem::offset_of!(GapConfig, mac_address) - 48usize];
+        [::core::mem::offset_of!(GapConfig, mac_address) - 50usize];
     ["Offset of field: GapConfig::adv_name"]
-        [::core::mem::offset_of!(GapConfig, adv_name) - 54usize];
+        [::core::mem::offset_of!(GapConfig, adv_name) - 56usize];
     ["Offset of field: GapConfig::conn_param"]
-        [::core::mem::offset_of!(GapConfig, conn_param) - 72usize];
+        [::core::mem::offset_of!(GapConfig, conn_param) - 74usize];
 };
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
@@ -5525,6 +5527,10 @@ unsafe extern "C" {
 unsafe extern "C" {
     #[doc = "Check if radio stack supports testing\n\n # Returns\n\ntrue if supported"]
     pub fn furi_hal_bt_is_testing_supported() -> bool;
+}
+unsafe extern "C" {
+    #[doc = "Check if the currently configured GAP role allows for broadcasting\n\n # Returns\n\ntrue if supported"]
+    pub fn furi_hal_bt_can_advertise() -> bool;
 }
 unsafe extern "C" {
     #[doc = "Check if particular instance of profile belongs to given type\n\n # Arguments\n\n* `profile` - FuriHalBtProfile instance. If NULL, uses current profile\n * `profile_template` - basic profile template to check against\n\n # Returns\n\ntrue on success"]
@@ -10269,7 +10275,7 @@ unsafe extern "C" {
     pub fn view_tie_icon_animation(view: *mut View, icon_animation: *mut IconAnimation);
 }
 unsafe extern "C" {
-    #[doc = "Set View Draw callback\n\n # Arguments\n\n* `view` - View instance\n * `callback` - draw callback"]
+    #[doc = "Set View Draw callback\n\n callback will be invoked on the GUI thread\n\n # Arguments\n\n* `view` - View instance\n * `callback` - draw callback"]
     pub fn view_set_draw_callback(view: *mut View, callback: ViewDrawCallback);
 }
 unsafe extern "C" {
@@ -10908,7 +10914,7 @@ unsafe extern "C" {
     );
 }
 unsafe extern "C" {
-    #[doc = "Emit update signal to GUI system.\n\n Rendering will happen later after GUI system process signal.\n\n # Arguments\n\n* `view_port` - ViewPort instance"]
+    #[doc = "Emit update signal to GUI system.\n\n Rendering will happen later, after the GUI system (gui_srv) has processed the signal.\n\n # Arguments\n\n* `view_port` - ViewPort instance"]
     pub fn view_port_update(view_port: *mut ViewPort);
 }
 unsafe extern "C" {
@@ -11601,7 +11607,7 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     #[doc = "Get submenu selected item index\n\n # Arguments\n\n* `submenu` - Submenu instance\n\n # Returns\n\nIndex of the selected item"]
-    pub fn submenu_get_selected_item(submenu: *mut Submenu) -> u32;
+    pub fn submenu_get_selected_item(submenu: *const Submenu) -> u32;
 }
 unsafe extern "C" {
     #[doc = "Set submenu selected item by index\n\n # Arguments\n\n* `submenu` - Submenu instance\n * `index` - The index of the selected item"]
@@ -12138,7 +12144,7 @@ unsafe extern "C" {
     );
 }
 unsafe extern "C" {
-    #[doc = "Set navigation event handler\n\n Called on Input Short Back Event, if it is not consumed by view\n\n # Arguments\n\n* `view_dispatcher` - ViewDispatcher instance\n * `callback` - ViewDispatcherNavigationEventCallback instance"]
+    #[doc = "Set navigation event handler\n\n > **Note:** this will be called on the thread that invoked view_dispatcher_run\n\n Called on Input Short Back Event, if it is not consumed by view\n\n # Arguments\n\n* `view_dispatcher` - ViewDispatcher instance\n * `callback` - ViewDispatcherNavigationEventCallback instance"]
     pub fn view_dispatcher_set_navigation_event_callback(
         view_dispatcher: *mut ViewDispatcher,
         callback: ViewDispatcherNavigationEventCallback,
@@ -26775,6 +26781,33 @@ unsafe extern "C" {
 }
 unsafe extern "C" {
     pub fn ble_event_dispatcher_unregister_svc_handler(handler: *mut GapSvcEventHandler);
+}
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct hci_request {
+    pub ogf: u16,
+    pub ocf: u16,
+    pub event: core::ffi::c_int,
+    pub cparam: *mut core::ffi::c_void,
+    pub clen: core::ffi::c_int,
+    pub rparam: *mut core::ffi::c_void,
+    pub rlen: core::ffi::c_int,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of hci_request"][::core::mem::size_of::<hci_request>() - 24usize];
+    ["Alignment of hci_request"][::core::mem::align_of::<hci_request>() - 4usize];
+    ["Offset of field: hci_request::ogf"][::core::mem::offset_of!(hci_request, ogf) - 0usize];
+    ["Offset of field: hci_request::ocf"][::core::mem::offset_of!(hci_request, ocf) - 2usize];
+    ["Offset of field: hci_request::event"][::core::mem::offset_of!(hci_request, event) - 4usize];
+    ["Offset of field: hci_request::cparam"][::core::mem::offset_of!(hci_request, cparam) - 8usize];
+    ["Offset of field: hci_request::clen"][::core::mem::offset_of!(hci_request, clen) - 12usize];
+    ["Offset of field: hci_request::rparam"]
+        [::core::mem::offset_of!(hci_request, rparam) - 16usize];
+    ["Offset of field: hci_request::rlen"][::core::mem::offset_of!(hci_request, rlen) - 20usize];
+};
+unsafe extern "C" {
+    pub fn hci_send_req(req: *mut hci_request, async_: u8) -> core::ffi::c_int;
 }
 #[repr(C, packed)]
 #[derive(Copy, Clone)]
