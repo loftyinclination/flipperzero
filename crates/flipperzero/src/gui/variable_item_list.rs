@@ -448,6 +448,15 @@ pub struct VariableItemListBoundToViewDispatcher<
 }
 
 impl<'callbacks, 'gui, VDC: ViewDispatcherCallbacks, OnClickCallbacks: 'callbacks>
+    AsRef<ViewDispatcherView<'gui, (), VDC>>
+    for VariableItemListBoundToViewDispatcher<'callbacks, 'gui, VDC, OnClickCallbacks>
+{
+    fn as_ref(&self) -> &ViewDispatcherView<'gui, (), VDC> {
+        &self.view
+    }
+}
+
+impl<'callbacks, 'gui, VDC: ViewDispatcherCallbacks, OnClickCallbacks: 'callbacks>
     VariableItemListBoundToViewDispatcher<'callbacks, 'gui, VDC, OnClickCallbacks>
 {
     pub fn switch_to_view(&self) -> () {

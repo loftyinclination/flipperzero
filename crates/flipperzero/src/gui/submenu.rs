@@ -180,14 +180,23 @@ pub struct SubmenuBoundToViewDispatcher<'gui, C: ViewDispatcherCallbacks> {
 }
 
 #[cfg(feature = "alloc")]
+impl<'gui, VDC: ViewDispatcherCallbacks> AsRef<ViewDispatcherView<'gui, (), VDC>>
+    for SubmenuBoundToViewDispatcher<'gui, VDC>
+{
+    fn as_ref(&self) -> &ViewDispatcherView<'gui, (), VDC> {
+        &self.view
+    }
+}
+
+#[cfg(feature = "alloc")]
 impl<'gui, VDC: ViewDispatcherCallbacks> SubmenuBoundToViewDispatcher<'gui, VDC> {
     /// Adds a new item to the submenu that, when interacted with, will switch the
     /// `ViewDispatcher`'s current `View` to the one provided to this method.
-    pub fn add_nav_item<'label, VC: ViewCallbacks>(
+    pub fn add_nav_item<'label, VC: ViewCallbacks, V: AsRef<ViewDispatcherView<'gui, VC, VDC>>>(
         &mut self,
         label: &'label CStr,
         // TODO: allow this to take a view id?
-        view: &ViewDispatcherView<'gui, VC, VDC>,
+        view: &V,
     ) -> SubmenuItemRef<'label> {
         let raw = self.as_raw();
         let index = self.inner.count;

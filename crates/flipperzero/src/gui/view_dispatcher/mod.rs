@@ -308,6 +308,13 @@ impl<'a, C: ViewDispatcherCallbacks> ViewDispatcherInner<'a, C> {
 }
 
 #[cfg(feature = "alloc")]
+impl<'a, VC: ViewCallbacks, VDC: ViewDispatcherCallbacks> AsRef<ViewDispatcherView<'a, VC, VDC>> for ViewDispatcherView<'a, VC, VDC> {
+    fn as_ref(&self) -> &ViewDispatcherView<'a, VC, VDC> {
+        self
+    }
+}
+
+#[cfg(feature = "alloc")]
 #[must_use]
 pub struct ViewDispatcherView<'a, VC: ViewCallbacks, VDC: ViewDispatcherCallbacks> {
     view_dispatcher: Arc<ViewDispatcherInner<'a, VDC>>,
