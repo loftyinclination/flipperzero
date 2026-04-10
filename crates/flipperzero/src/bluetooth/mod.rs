@@ -9,8 +9,13 @@ use ufmt::derive::uDebug;
 
 pub mod beacon;
 pub mod handler;
+pub mod hci;
 pub mod profile;
 pub mod test_patterns;
+
+pub use bt_hci::event;
+pub use bt_hci::param;
+pub use bt_hci as bt_hci;
 
 /// Returns `true` if core2 (which runs Bluetooth) is alive.
 pub fn is_alive() -> bool {
