@@ -1,10 +1,93 @@
+use crate::lock::SpinLock;
 use core::ffi::{c_char, c_uchar, c_void};
 use core::option::Option;
 
-#[repr(C)]
-#[derive(Debug, Copy, Clone)]
-pub struct Bt {
-    _unused: [u8; 0],
+pub use bt_inner::BtInner;
+
+pub type Bt = SpinLock<bt_inner::BtInner>;
+
+pub(crate) mod bt_inner {
+    extern crate alloc;
+
+    use crate::miri_bindings::utils::*;
+
+    use crate::lock::SpinLock;
+    use alloc::sync::Arc;
+
+    pub struct HciUartPacket {}
+    pub enum GapConnectionState {
+        Disconnected,
+        Advertising,
+        Connected,
+    }
+
+    pub struct BtInner {
+        pub thread_id: usize,
+        hci_event_channel: Option<HciUartPacket>,
+        pub stop: bool,
+
+        pub requested_gap_connection_state: Option<GapConnectionState>,
+    }
+
+    impl BtInner {
+        pub fn spawn() -> Arc<SpinLock<Self>> {
+            let bt = Self {
+                thread_id: 0,
+                stop: false,
+                hci_event_channel: None,
+                requested_gap_connection_state: None,
+            };
+            let bt = Arc::new(SpinLock::new(bt, b"Bt inner"));
+
+            let thread_id = {
+                let bt_ptr = Arc::into_raw(bt.clone());
+                // SAFETY: Arc was generated above
+                unsafe { miri_thread_spawn(thread_start, bt_ptr as *mut _) }
+            };
+
+            let _ = unsafe { miri_set_thread_name(thread_id, c"bt gap service".as_ptr()) };
+
+            {
+                bt.lock(b"spawn").thread_id = thread_id;
+            }
+
+            // the BT stack in the flipper has 3 threads:
+            //  * the BT service thread (applications/services/main/bt/bt_service/bt.c::bt_svc),
+            //  which controls the configuration of the BLE, and manages the GAP service. a number
+            //  of operations on this thread are executed synchronously, via a lock that is
+            //  provided to the message queue
+            //  * the GAP service thread (targets/f7/ble_glue/gap.c::gap_app), which handles
+            //  starting and stopping advertising, as well as managing the single connection,
+            //  * and the HCI thread/tl mailbox (see AN5289, 14.2), which actually interfaces with
+            //  the BLE PHY, and is responsible for sending HCI events
+            extern "Rust" fn thread_start(data: *mut ()) {
+                // SAFETY: data is guaranteed to have been created from an arc, just above
+                let bt: Arc<SpinLock<BtInner>> = unsafe { Arc::from_raw(data as *const _) };
+
+                loop {
+                    let mut bt = bt.lock(b"bt loop");
+
+                    if bt.hci_event_channel.is_some() {
+                        todo!()
+                    }
+
+                    if bt.requested_gap_connection_state.is_some() {
+                        todo!()
+                    }
+
+                    if bt.stop {
+                        break;
+                    }
+
+                    drop(bt);
+
+                    miri_spin_loop();
+                }
+            }
+
+            bt
+        }
+    }
 }
 
 pub const BtStatusUnavailable: BtStatus = BtStatus(0);
@@ -16,21 +99,28 @@ pub const BtStatusConnected: BtStatus = BtStatus(3);
 pub struct BtStatus(pub c_uchar);
 pub type BtStatusChangedCallback =
     Option<unsafe extern "C" fn(status: BtStatus, context: *mut c_void)>;
-unsafe extern "C" {
-    #[doc = "Change BLE Profile\n > **Note:** Call of this function leads to 2nd core restart\n\n # Arguments\n\n* `bt` - Bt instance\n * `profile_template` - Profile template to change to\n * `params` - Profile parameters. Can be NULL\n\n # Returns\n\ntrue on success"]
-    pub fn bt_profile_start(
-        bt: *mut Bt,
-        profile_template: *const FuriHalBleProfileTemplate,
-        params: FuriHalBleProfileParams,
-    ) -> *mut FuriHalBleProfileBase;
+
+#[doc = "Change BLE Profile\n > **Note:** Call of this function leads to 2nd core restart\n\n # Arguments\n\n* `bt` - Bt instance\n * `profile_template` - Profile template to change to\n * `params` - Profile parameters. Can be NULL\n\n # Returns\n\ntrue on success"]
+pub fn bt_profile_start(
+    bt: *mut Bt,
+    profile_template: *const FuriHalBleProfileTemplate,
+    params: FuriHalBleProfileParams,
+) -> *mut FuriHalBleProfileBase {
+    todo!()
 }
-unsafe extern "C" {
-    #[doc = "Stop current BLE Profile and restore default profile\n > **Note:** Call of this function leads to 2nd core restart\n\n # Arguments\n\n* `bt` - Bt instance\n\n # Returns\n\ntrue on success"]
-    pub fn bt_profile_restore_default(bt: *mut Bt) -> bool;
+#[doc = "Stop current BLE Profile and restore default profile\n > **Note:** Call of this function leads to 2nd core restart\n\n # Arguments\n\n* `bt` - Bt instance\n\n # Returns\n\ntrue on success"]
+pub fn bt_profile_restore_default(bt: *mut Bt) -> bool {
+    todo!()
 }
-unsafe extern "C" {
-    #[doc = "Disconnect from Central\n\n # Arguments\n\n* `bt` - Bt instance"]
-    pub fn bt_disconnect(bt: *mut Bt);
+#[doc = "Disconnect from Central\n\n # Arguments\n\n* `bt` - Bt instance"]
+pub fn bt_disconnect(bt: *mut Bt) {
+    let bt = unsafe { &*bt };
+    let mut bt = bt.lock(b"disconnect");
+    // queue closing connection to happen on the bt thread
+    // close_rpc_connection
+    // stop advertising
+    // TODO: block until disconnected
+    bt.requested_gap_connection_state = Some(bt_inner::GapConnectionState::Disconnected);
 }
 
 #[repr(transparent)]
@@ -105,10 +195,22 @@ pub unsafe fn furi_hal_bt_unlock_core2() {
 pub unsafe fn furi_hal_bt_start_radio_stack() -> bool {
     todo!()
 }
+
 #[doc = "Get radio stack type\n\n # Returns\n\nFuriHalBtStack instance"]
 pub unsafe fn furi_hal_bt_get_radio_stack() -> FuriHalBtStack {
     todo!()
 }
+
+pub struct BleGlueC2Info {
+    // NOTE: this is not a complete representation of the C type, solely bcs we're only using a few
+    // of the fields,
+    pub StackType: u8,
+    pub StackTypeString: [core::ffi::c_char; 20usize],
+}
+pub unsafe fn ble_glue_get_c2_info() -> *const BleGlueC2Info {
+    todo!()
+}
+
 #[doc = "Check if radio stack supports BLE GAT/GAP\n\n # Returns\n\ntrue if supported"]
 pub unsafe fn furi_hal_bt_is_gatt_gap_supported() -> bool {
     todo!()
@@ -150,6 +252,9 @@ pub struct BleEventAckStatus(pub u8);
 #[repr(C)]
 pub struct GapEventHandler {}
 pub type GapSvcEventHandler = GapEventHandler;
+pub type BleSvcEventHandlerCb =
+    Option<unsafe extern "C" fn(event: *mut c_void, context: *mut c_void) -> BleEventAckStatus>;
+
 pub unsafe fn ble_event_dispatcher_register_svc_handler(
     handler: BleSvcEventHandlerCb,
     context: *mut c_void,
@@ -158,4 +263,19 @@ pub unsafe fn ble_event_dispatcher_register_svc_handler(
 }
 pub unsafe fn ble_event_dispatcher_unregister_svc_handler(handler: *mut GapSvcEventHandler) {
     todo!()
+}
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct hci_request {
+    pub ogf: u16,
+    pub ocf: u16,
+    pub event: core::ffi::c_int,
+    pub cparam: *mut core::ffi::c_void,
+    pub clen: core::ffi::c_int,
+    pub rparam: *mut core::ffi::c_void,
+    pub rlen: core::ffi::c_int,
+}
+unsafe extern "C" {
+    pub fn hci_send_req(req: *mut hci_request, async_: u8) -> core::ffi::c_int;
 }

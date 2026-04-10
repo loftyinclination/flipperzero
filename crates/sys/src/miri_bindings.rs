@@ -318,6 +318,8 @@ pub struct GPIO_TypeDef {
 }
 
 static GUI: lock::SpinLock<OnceCell<Arc<Gui>>> = lock::SpinLock::new(OnceCell::new(), b"GUI");
+static BLUETOOTH: lock::SpinLock<OnceCell<Arc<Bt>>> =
+    lock::SpinLock::new(OnceCell::new(), b"Bluetooth");
 
 #[doc = "Open record\n\n # Arguments\n\n* `name` - record name\n\n # Returns\n\npointer to the record\n > **Note:** Thread safe. Open and close must be executed from the same\n thread. Suspends caller thread till record is available"]
 pub unsafe fn furi_record_open(name: *const core::ffi::c_char) -> *mut c_void {
@@ -350,6 +352,22 @@ pub unsafe fn furi_record_open(name: *const core::ffi::c_char) -> *mut c_void {
                     "[furi_record open (local), furi_record open (to return), static cell, gui service thread]"
                 );
                 gui_ptr.cast::<c_void>().cast_mut()
+            }
+        }
+    } else if name == c"bt" {
+        let bt_cell = BLUETOOTH.lock(b"record acquire");
+
+        match bt_cell.get() {
+            Some(_gui) => {
+                todo!("we currently don't support the same record being opened multiple times")
+            }
+            None => {
+                let bt = BtInner::spawn();
+
+                let _ = bt_cell.set(bt.clone());
+
+                Arc::into_raw(bt.clone()).cast_mut().cast()
+
             }
         }
     } else {

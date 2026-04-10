@@ -1,7 +1,6 @@
 //! Furi API.
 
 pub mod event_flag;
-#[cfg(not(miri))]
 pub mod hal;
 pub mod io;
 pub mod kernel;

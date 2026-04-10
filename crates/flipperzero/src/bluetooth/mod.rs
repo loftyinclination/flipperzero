@@ -7,10 +7,12 @@ use flipperzero_sys as sys;
 use flipperzero_sys::furi::UnsafeRecord;
 use ufmt::derive::uDebug;
 
+#[cfg(not(miri))]
 pub mod beacon;
 pub mod handler;
 pub mod hci;
 pub mod profile;
+#[cfg(not(miri))]
 pub mod test_patterns;
 
 pub use bt_hci::event;
