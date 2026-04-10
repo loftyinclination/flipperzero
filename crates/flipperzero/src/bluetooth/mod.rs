@@ -94,6 +94,8 @@ impl Drop for Bluetooth {
 
 impl Bluetooth {
     /// Obtains a handle to the Bluetooth service.
+    ///
+    /// This will disconnect from any currently connected bluetooth devices.
     pub fn open() -> Self {
         let bt = unsafe { UnsafeRecord::open(c"bt") };
         unsafe { sys::bt_disconnect(bt.as_ptr()) };
