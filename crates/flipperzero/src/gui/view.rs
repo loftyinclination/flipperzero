@@ -105,6 +105,30 @@ impl<C: ViewCallbacks> View<C> {
             unsafe { sys::view_set_input_callback(raw, callback) };
         }
 
+        {
+            pub unsafe extern "C" fn dispatch_enter<C: ViewCallbacks>(context: *mut c_void) -> () {
+                let context: *mut C = context.cast();
+                // SAFETY: `context` is stored in a `Box` which is a member of `View`
+                // and the callback is accessed exclusively by this function
+                unsafe { &mut *context }.on_enter()
+            }
+
+            let callback = Some(dispatch_enter::<C> as _);
+            unsafe { sys::view_set_enter_callback(raw, callback) };
+        }
+
+        {
+            pub unsafe extern "C" fn dispatch_exit<C: ViewCallbacks>(context: *mut c_void) -> () {
+                let context: *mut C = context.cast();
+                // SAFETY: `context` is stored in a `Box` which is a member of `View`
+                // and the callback is accessed exclusively by this function
+                unsafe { &mut *context }.on_exit()
+            }
+
+            let callback = Some(dispatch_exit::<C> as _);
+            unsafe { sys::view_set_exit_callback(raw, callback) };
+        }
+
         let callbacks_ptr = view.callbacks.as_ptr();
         unsafe { sys::view_set_context(raw, callbacks_ptr.cast::<c_void>()) };
         {
@@ -211,6 +235,10 @@ pub trait ViewCallbacks: Send {
     fn on_back_event(&mut self) -> Option<u32> {
         None
     }
+
+    fn on_enter(&mut self) -> () {}
+
+    fn on_exit(&mut self) -> () {}
 }
 
 impl ViewCallbacks for () {
