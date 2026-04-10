@@ -254,20 +254,5 @@ pub use bindings::*;
 #[cfg(miri)]
 pub use miri_bindings::*;
 
-#[repr(C)]
-pub struct hci_request {
-    pub ogf: u16,
-    pub ocf: u16,
-    pub event: core::ffi::c_int,
-    pub cparam: *mut core::ffi::c_void,
-    pub clen: core::ffi::c_int,
-    pub rparam: *mut core::ffi::c_void,
-    pub rlen: core::ffi::c_int,
-}
-
-unsafe extern "C" {
-    fn hci_send_req(req: *mut hci_request, _async: u8) -> core::ffi::c_int;
-}
-
 // Definition of inline functions
 pub use inlines::furi_hal_gpio::*;
