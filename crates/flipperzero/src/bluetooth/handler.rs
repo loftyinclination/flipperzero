@@ -99,5 +99,5 @@ pub trait BleEventCallbacks: Send {
     /// Callback to invoke when a BLE event is received.
     ///
     /// Note: this will be invoked on the BLE GAP service thread.
-    fn handle_event(&mut self, event_packet: EventPacket) -> EventBubbling;
+    fn handle_event<'a, 'b>(&'a mut self, event_packet: EventPacket<'b>) -> EventBubbling;
 }
