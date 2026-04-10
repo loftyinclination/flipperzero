@@ -8,6 +8,8 @@ use flipperzero_sys as sys;
 use crate::internals::alloc::NonUniqueBox;
 use crate::{gui::canvas::CanvasView, input::InputEvent};
 #[cfg(feature = "alloc")]
+use core::fmt::Debug;
+#[cfg(feature = "alloc")]
 use core::mem::ManuallyDrop;
 
 /// UI view.
@@ -16,6 +18,16 @@ pub struct View<C: ViewCallbacks> {
     inner: ManuallyDrop<ViewInner>,
     callbacks: NonUniqueBox<C>,
     should_drop: bool,
+}
+
+#[cfg(feature = "alloc")]
+impl<C: ViewCallbacks + Debug> Debug for View<C> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let callbacks: &C = &self.callbacks;
+        f.debug_struct("View")
+            .field("callbacks", callbacks)
+            .finish()
+    }
 }
 
 #[cfg(feature = "alloc")]
