@@ -4,10 +4,9 @@ use bt_hci::FromHciBytes;
 use bt_hci::event::EventPacket;
 use core::{ffi::c_void, ptr::NonNull};
 use flipperzero_sys as sys;
-use sys::BleEventAckStatus;
 
 pub struct EventHandler<'bluetooth, 'profile, PC: BleProfileCallbacks, BEC: BleEventCallbacks> {
-    handler: NonNull<flipperzero_sys::GapEventHandler>,
+    handler: NonNull<sys::GapEventHandler>,
     profile: &'profile Profile<'bluetooth, PC>,
     callbacks: BEC,
 }
@@ -19,7 +18,7 @@ impl<'bluetooth, 'profile, PC: BleProfileCallbacks, BEC: BleEventCallbacks>
         unsafe extern "C" fn dispatch_ble_event<C: BleEventCallbacks>(
             event: *mut c_void,
             context: *mut c_void,
-        ) -> BleEventAckStatus {
+        ) -> sys::BleEventAckStatus {
             let context = unsafe { &mut *(context as *mut C) };
 
             // event here is a hci_uart_pckt, and so the first byte is the type of that uart packet
