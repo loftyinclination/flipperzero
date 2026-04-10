@@ -5,6 +5,7 @@ use crate::error;
 use crate::furi::string::FuriString;
 use flipperzero_sys as sys;
 use flipperzero_sys::furi::UnsafeRecord;
+use ufmt::derive::uDebug;
 
 pub mod beacon;
 pub mod handler;
@@ -21,6 +22,53 @@ pub fn is_alive() -> bool {
 /// Returns `true` if the device is connected or advertising.
 pub fn is_active() -> bool {
     unsafe { sys::furi_hal_bt_is_active() }
+}
+
+/// The type of the radio stack that is has been flashed to the ARM-Cortex M0 coprocessor.
+///
+/// Corresponds to raw [`sys::FuriHalBtStack`].
+#[derive(Copy, Clone, Debug, uDebug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum SupportedRadioStack {
+    /// Light firmware, which only has support for peripheral device connections.
+    ///
+    /// This is the default that the flipper is built with.
+    Light,
+    /// Full firmware, supporting connections in both peripheral and central role.
+    Full,
+}
+
+#[derive(Copy, Clone, Debug, uDebug, Eq, PartialEq, Hash, Ord, PartialOrd)]
+pub enum RadioStack {
+    Full,
+    Hci,
+    Light,
+    Beacon,
+    Basic,
+    FullExtendedAdvanced,
+    HciExtendedAdvanced,
+    Unknown(u8),
+}
+
+pub fn get_radio_stack() -> Result<SupportedRadioStack, RadioStack> {
+    match unsafe { sys::furi_hal_bt_get_radio_stack() } {
+        sys::FuriHalBtStackLight => Ok(SupportedRadioStack::Light),
+        sys::FuriHalBtStackFull => Ok(SupportedRadioStack::Full),
+        _ => {
+            let status = unsafe { sys::ble_glue_get_c2_info() };
+            let status = unsafe { &*status };
+            Err(
+            match status.StackType {
+                0x01 => RadioStack::Full,
+                0x02 => RadioStack::Hci,
+                0x03 => RadioStack::Light,
+                0x04 => RadioStack::Beacon,
+                0x05 => RadioStack::Basic,
+                0x06 => RadioStack::Full,
+                0x07 => RadioStack::Full,
+                _ => RadioStack::Unknown(status.StackType),
+            })
+        }
+    }
 }
 
 /// Returns a string containing the BT/BLE system component state.
