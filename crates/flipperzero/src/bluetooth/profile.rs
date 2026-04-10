@@ -6,7 +6,9 @@ use core::{
     ffi::{CStr, c_void},
     ptr::{self, NonNull},
 };
-use flipperzero_sys::{self as sys, FuriHalBleProfileBase, GapConfig};
+use flipperzero_sys::{self as sys, FuriHalBleProfileBase};
+
+pub use flipperzero_sys::GapConfig;
 
 pub struct Profile<'a, C: BleProfileCallbacks> {
     inner: NonNull<ProfileSuper<C>>,
@@ -38,7 +40,8 @@ impl<'a, C: BleProfileCallbacks + 'static> Profile<'a, C> {
             .cast()
         };
 
-        let inner = NonNull::new(profile_super).expect("Profile should have been started correctly, and if it does, it should return a non-null pointer");
+        let inner = NonNull::new(profile_super)
+            .expect("Profile should have been started correctly, and if it does, it should return a non-null pointer");
 
         Self { inner, bluetooth }
     }
