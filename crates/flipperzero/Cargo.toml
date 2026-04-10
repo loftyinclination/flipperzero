@@ -33,7 +33,8 @@ rand_core = "0.6"
 lock_api = "0.4"
 
 # Bluetooth Events
-bt-hci = "0.8.0"
+# bt-hci = "0.8.0"
+bt-hci = { path = "/home/lofty/Documents/Creative/Programming/Rust/bt-hci/", features = ["ufmt"] }
 
 uuid = { version = "1.16", default-features = false }
 
