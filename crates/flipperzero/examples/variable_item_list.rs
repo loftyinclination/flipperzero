@@ -2,11 +2,13 @@
 
 #![no_main]
 #![no_std]
+#![feature(box_into_inner)]
 
 extern crate alloc;
 extern crate flipperzero_alloc;
 extern crate flipperzero_rt;
 
+use alloc::boxed::Box;
 #[cfg(miri)]
 use alloc::sync::Arc;
 use core::ffi::CStr;
@@ -38,6 +40,9 @@ unsafe extern "Rust" {
     pub fn miri_set_thread_name(thread_id: usize, name: *const u8) -> bool;
     pub safe fn miri_write_to_stdout(bytes: &[u8]);
 }
+
+#[cfg(not(miri))]
+pub fn miri_write_to_stdout(bytes: &[u8]) {}
 
 struct State {}
 
@@ -209,13 +214,7 @@ fn run_until_exit_miri(
     use alloc::sync::Arc;
 
     let context = SendContext { gui, counter };
-
-    let thread_id = {
-        // SAFETY: Arc was generated above
-        unsafe { miri_thread_spawn(send_events_for_miri, &raw const context as *mut _) }
-    };
-
-    unsafe { miri_set_thread_name(thread_id, c"miri event sender".as_ptr()) };
+    let thread_id = thread_spawn(send_events_for_miri, context);
 
     let view_dispatcher = view_dispatcher.run();
     miri_write_to_stdout(b"View Dispatcher returned from run\n");
@@ -238,10 +237,32 @@ fn run_until_exit_miri(
 }
 
 #[cfg(miri)]
-extern "Rust" fn send_events_for_miri(data: *mut ()) {
+fn thread_spawn<F: FnOnce(T), T: Send>(f: F, t: T) -> usize {
+    struct ThreadContext<F: FnOnce(T), T>(F, T);
+
+    extern "Rust" fn dispatch_thread<F: FnOnce(T), T>(data: *mut ()) {
+        let data = unsafe { Box::from_raw(data.cast()) };
+        let ThreadContext(callback, arg): ThreadContext<F, T> = Box::into_inner(data);
+
+        callback(arg)
+    }
+
+    let context = Box::new(ThreadContext(f, t));
+
+    let thread_id = {
+        // SAFETY: Arc was generated above
+        unsafe { miri_thread_spawn(dispatch_thread::<F, T>, Box::into_raw(context).cast()) }
+    };
+
+    unsafe { miri_set_thread_name(thread_id, c"miri event sender".as_ptr()) };
+
+    thread_id
+}
+
+#[cfg(miri)]
+fn send_events_for_miri(context: SendContext) {
     use flipperzero::input::miri::send;
 
-    let context: &SendContext = unsafe { &*data.cast::<SendContext>() };
     let counter = &context.counter;
     let gui = &context.gui;
 

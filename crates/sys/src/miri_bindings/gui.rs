@@ -86,6 +86,8 @@ pub(crate) mod gui_inner {
         pub view_port: Option<NonNull<ViewPort>>,
     }
 
+    unsafe impl Send for GuiInner {}
+
     impl GuiInner {
         // This isn't _entirely_ correct to the source; in that, the GUI record is created and
         // populated by the GUI svc thread, not the other way around.
