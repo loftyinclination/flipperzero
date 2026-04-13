@@ -194,44 +194,44 @@ fn run_until_exit(view_dispatcher: ViewDispatcher<'_, State>) -> i32 {
 }
 
 #[cfg(miri)]
-struct SendContext<'a> {
+struct SendContext<'callback, 'gui> {
     gui: Arc<flipperzero_sys::Gui>,
-    counter: &'a AtomicI8,
+    counter: &'callback AtomicI8,
+    variable_item_list_view: VariableItemListBoundToViewDispatcher<
+        'callback,
+        'gui,
+        State,
+        UniqueCallbackForEachItem<'callback>,
+    >,
 }
 
 #[cfg(miri)]
-fn run_until_exit_miri(
-    view_dispatcher: ViewDispatcher<'_, State>,
+fn run_until_exit_miri<'callback, 'gui>(
+    view_dispatcher: ViewDispatcher<'gui, State>,
     variable_item_list_view: VariableItemListBoundToViewDispatcher<
-        '_,
-        '_,
+        'callback,
+        'gui,
         State,
-        UniqueCallbackForEachItem<'_>,
+        UniqueCallbackForEachItem<'callback>,
     >,
     gui: Arc<flipperzero_sys::Gui>,
-    counter: &AtomicI8,
+    counter: &'callback AtomicI8,
 ) -> i32 {
     use alloc::sync::Arc;
 
-    let context = SendContext { gui, counter };
+    let context = SendContext {
+        gui,
+        counter,
+        variable_item_list_view,
+    };
     let thread_id = thread_spawn(send_events_for_miri, context);
 
     let view_dispatcher = view_dispatcher.run();
     miri_write_to_stdout(b"View Dispatcher returned from run\n");
 
-    assert_eq!(Arc::strong_count(&view_dispatcher.0), 2, "Before drop");
-
-    miri_write_to_stdout(b"Attempting to drop variable item list view\n");
-    drop(variable_item_list_view);
-
-    assert_eq!(Arc::strong_count(&view_dispatcher.0), 1, "After drop");
-    miri_write_to_stdout(b"Dropping view dispatcher\n");
-
-    drop(view_dispatcher);
-
     unsafe { miri_thread_join(thread_id) };
 
-    assert_eq!(counter.load(Ordering::SeqCst), 2);
+    assert_eq!(counter.load(Ordering::SeqCst), 0);
 
     0
 }
@@ -260,7 +260,7 @@ fn thread_spawn<F: FnOnce(T), T: Send>(f: F, t: T) -> usize {
 }
 
 #[cfg(miri)]
-fn send_events_for_miri(context: SendContext) {
+fn send_events_for_miri<'callback, 'gui>(mut context: SendContext<'callback, 'gui>) {
     use flipperzero::input::miri::send;
 
     let counter = &context.counter;
@@ -293,6 +293,17 @@ fn send_events_for_miri(context: SendContext) {
     send!(Up event to gui); // move to add variable amount item
     send!(Ok event to gui); // add variable amount, which is 1
     assert_eq!(counter.load(Ordering::SeqCst), 2);
+
+    let variable_item_list = &mut context.variable_item_list_view;
+    variable_item_list.push_item_with_on_click_callback(
+        "New Item".into(),
+        IncrementGlobalCounterCallback {
+            counter: &counter,
+            increment_by: -1,
+        },
+    );
+    send!(Down event to gui 2 times); // move to the new item
+    send!(Ok event to gui 2 times); // subtract 1 twice
 
     send!(Back event to gui); // back event to exit out
 }
