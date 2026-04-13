@@ -21,6 +21,9 @@ pub struct View<C: ViewCallbacks> {
 }
 
 #[cfg(feature = "alloc")]
+unsafe impl<C: ViewCallbacks> Send for View<C> {}
+
+#[cfg(feature = "alloc")]
 impl<C: ViewCallbacks + Debug> Debug for View<C> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let callbacks: &C = &self.callbacks;

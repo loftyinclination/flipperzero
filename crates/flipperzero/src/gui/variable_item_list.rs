@@ -16,15 +16,27 @@ use core::{
 use flipperzero_sys as sys;
 
 pub struct VariableItemList<'a, T> {
-    inner: NonNull<sys::VariableItemList>,
+    inner: VariableItemListInner,
     strings: Vec<FuriString>,
     context: Arc<CallbackContext<'a, T>>,
 }
+
+struct VariableItemListInner(NonNull<sys::VariableItemList>);
+
+impl VariableItemListInner {
+    fn as_ptr(&self) -> *mut sys::VariableItemList {
+        self.0.as_ptr()
+    }
+}
+
+unsafe impl Send for VariableItemListInner {}
 
 pub struct VariableItem {
     list_index: usize,
     inner: NonNull<sys::VariableItem>,
 }
+
+unsafe impl Send for VariableItem {}
 
 type CallbackContext<'a, T> = Mutex<CallbackContextInner<'a, T>>;
 
@@ -43,7 +55,7 @@ impl<C> CallbackContextInner<'_, C> {
         match item_type {
             VariableItemType::Plain(item) => &item,
             VariableItemType::WithValues(value_context) => unsafe {
-                &value_context.item.assume_init_ref()
+                &value_context.item
             },
         }
     }
@@ -53,7 +65,7 @@ enum VariableItemType<'a> {
     Plain(VariableItem),
     // NOTE: we need to wrap the callbacks context in a smart pointer here, so that we can point to
     // it from the FFI callback
-    WithValues(Rc<VariableItemValueCallbacksContext<'a>>),
+    WithValues(Box<VariableItemValueCallbacksContext<'a>>),
 }
 
 pub struct UniqueCallbackForEachItem<'a>(Vec<(usize, Box<dyn Callback + 'a>)>);
@@ -69,15 +81,15 @@ impl<'a> UniqueCallbackForEachItem<'a> {
 pub struct VariableItemValueCallbacksContext<'a> {
     callbacks: Box<dyn OnCurrentValueTextChangedCallbacks + 'a>,
     value_label: FuriString,
-    item: MaybeUninit<VariableItem>,
+    item: VariableItem,
 }
 
-pub trait Callback {
+pub trait Callback: Send {
     /// Called on a (short) Ok input event.
     fn on_click(&self, item: &VariableItem) -> ();
 }
 
-pub trait OnCurrentValueTextChangedCallbacks {
+pub trait OnCurrentValueTextChangedCallbacks: Send {
     fn get_new_label(&self, item: &VariableItem, value: u8) -> FuriString;
 
     fn react_to_change(&self) -> () {}
@@ -89,7 +101,7 @@ impl<'callbacks> VariableItemList<'callbacks, UniqueCallbackForEachItem<'callbac
     pub fn new() -> Self {
         let inner = {
             let variable_item_list = unsafe { sys::variable_item_list_alloc() };
-            unsafe { NonNull::new_unchecked(variable_item_list) }
+            VariableItemListInner(unsafe { NonNull::new_unchecked(variable_item_list) })
         };
 
         unsafe extern "C" fn dispatch_callback<'callbacks>(context: *mut c_void, index: u32) -> () {
@@ -123,7 +135,7 @@ impl<'callbacks> VariableItemList<'callbacks, UniqueCallbackForEachItem<'callbac
 
         unsafe {
             sys::variable_item_list_set_enter_callback(
-                inner.as_ptr(),
+                res.inner.as_ptr(),
                 Some(dispatch_callback),
                 Arc::as_ptr(&res.context).cast_mut().cast(),
             );
@@ -188,7 +200,7 @@ impl<'callbacks> VariableItemList<'callbacks, UniqueCallbackForEachItem<'callbac
             let context = unsafe { sys::variable_item_get_context(raw) };
             let context = unsafe { &mut *(context as *mut VariableItemValueCallbacksContext) };
             let callbacks = &context.callbacks;
-            let item = unsafe { context.item.assume_init_ref() };
+            let item = &context.item;
 
             let value = unsafe { sys::variable_item_get_current_value_index(raw) };
 
@@ -201,11 +213,7 @@ impl<'callbacks> VariableItemList<'callbacks, UniqueCallbackForEachItem<'callbac
 
         let list_index = context.items.len();
 
-        let mut value_callbacks_context = Rc::new(VariableItemValueCallbacksContext {
-            callbacks: Box::new(callbacks),
-            value_label: FuriString::new(),
-            item: MaybeUninit::uninit(),
-        });
+        let mut item_context = Box::new_uninit();
 
         let variable_item = unsafe {
             sys::variable_item_list_add(
@@ -213,32 +221,35 @@ impl<'callbacks> VariableItemList<'callbacks, UniqueCallbackForEachItem<'callbac
                 label.as_c_ptr(),
                 number_of_options as u8,
                 Some(dispatch_value_changed_callback),
-                Rc::as_ptr(&value_callbacks_context).cast_mut().cast(),
+                Box::as_ptr(&mut item_context).cast_mut().cast(),
             )
         };
 
         let inner = unsafe { NonNull::new_unchecked(variable_item) };
         let item = VariableItem { inner, list_index };
 
-        {
-            let value_callbacks_context =
-                unsafe { Rc::get_mut_unchecked(&mut value_callbacks_context) };
+        item_context.write(VariableItemValueCallbacksContext {
+            callbacks: Box::new(callbacks),
+            value_label: FuriString::new(),
+            item,
+        });
 
-            let value_label = value_callbacks_context.callbacks.get_new_label(&item, 0);
+        {
+            let value_callbacks_context = unsafe { &mut item_context.assume_init_mut() };
+
+            let value_label = value_callbacks_context.callbacks.get_new_label(&value_callbacks_context.item, 0);
             unsafe {
                 sys::variable_item_set_current_value_text(
-                    item.inner.as_ptr(),
+                    value_callbacks_context.item.inner.as_ptr(),
                     value_label.as_c_ptr(),
                 )
             };
             value_callbacks_context.value_label = value_label;
-
-            value_callbacks_context.item.write(item);
         }
 
-        context
-            .items
-            .push(VariableItemType::WithValues(value_callbacks_context));
+        context.items.push(VariableItemType::WithValues(unsafe {
+            item_context.assume_init()
+        }));
         self.strings.push(label);
     }
 
@@ -260,7 +271,7 @@ impl<'callbacks> VariableItemList<'callbacks, UniqueCallbackForEachItem<'callbac
             let context = unsafe { sys::variable_item_get_context(raw) };
             let context = unsafe { &mut *(context as *mut VariableItemValueCallbacksContext) };
             let callbacks = &context.callbacks;
-            let item = unsafe { context.item.assume_init_ref() };
+            let item = &context.item;
 
             let value = unsafe { sys::variable_item_get_current_value_index(raw) };
 
@@ -273,11 +284,7 @@ impl<'callbacks> VariableItemList<'callbacks, UniqueCallbackForEachItem<'callbac
 
         let list_index = context.items.len();
 
-        let mut value_callbacks_context = Rc::new(VariableItemValueCallbacksContext {
-            callbacks: Box::new(on_current_value_changed_callbacks),
-            value_label: FuriString::new(),
-            item: MaybeUninit::uninit(),
-        });
+        let mut item_context = Box::new_uninit();
 
         let variable_item = unsafe {
             sys::variable_item_list_add(
@@ -285,32 +292,35 @@ impl<'callbacks> VariableItemList<'callbacks, UniqueCallbackForEachItem<'callbac
                 label.as_c_ptr(),
                 number_of_options as u8,
                 Some(dispatch_value_changed_callback),
-                Rc::as_ptr(&value_callbacks_context).cast_mut().cast(),
+                Box::as_mut_ptr(&mut item_context).cast(),
             )
         };
 
         let inner = unsafe { NonNull::new_unchecked(variable_item) };
         let item = VariableItem { inner, list_index };
 
-        {
-            let value_callbacks_context =
-                unsafe { Rc::get_mut_unchecked(&mut value_callbacks_context) };
+        item_context.write(VariableItemValueCallbacksContext {
+            callbacks: Box::new(on_current_value_changed_callbacks),
+            value_label: FuriString::new(),
+            item,
+        });
 
-            let value_label = value_callbacks_context.callbacks.get_new_label(&item, 0);
+        {
+            let value_callbacks_context = unsafe { &mut item_context.assume_init_mut() };
+
+            let value_label = value_callbacks_context.callbacks.get_new_label(&value_callbacks_context.item, 0);
             unsafe {
                 sys::variable_item_set_current_value_text(
-                    item.inner.as_ptr(),
+                    value_callbacks_context.item.inner.as_ptr(),
                     value_label.as_c_ptr(),
                 )
             };
             value_callbacks_context.value_label = value_label;
-
-            value_callbacks_context.item.write(item);
         }
 
-        context
-            .items
-            .push(VariableItemType::WithValues(value_callbacks_context));
+        context.items.push(VariableItemType::WithValues(unsafe {
+            item_context.assume_init()
+        }));
         self.strings.push(label);
 
         context
@@ -341,7 +351,7 @@ impl<'callback, C: Callback + 'callback> VariableItemList<'callback, C> {
     pub fn new_with_callback(mut on_click_callback: C) -> Self {
         let inner = {
             let variable_item_list = unsafe { sys::variable_item_list_alloc() };
-            unsafe { NonNull::new_unchecked(variable_item_list) }
+            VariableItemListInner(unsafe { NonNull::new_unchecked(variable_item_list) })
         };
 
         unsafe extern "C" fn dispatch_callback<C: Callback>(
@@ -368,7 +378,7 @@ impl<'callback, C: Callback + 'callback> VariableItemList<'callback, C> {
 
         unsafe {
             sys::variable_item_list_set_enter_callback(
-                inner.as_ptr(),
+                res.inner.as_ptr(),
                 Some(dispatch_callback::<C>),
                 Arc::as_ptr(&res.context).cast_mut().cast(),
             );
