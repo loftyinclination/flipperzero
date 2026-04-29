@@ -3,6 +3,7 @@ use core::ffi::{c_char, c_uchar, c_void};
 use core::option::Option;
 
 pub use bt_inner::BtInner;
+use core::ptr::NonNull;
 
 pub type Bt = SpinLock<bt_inner::BtInner>;
 
@@ -12,21 +13,22 @@ pub(crate) mod bt_inner {
     use crate::miri_bindings::utils::*;
 
     use crate::lock::SpinLock;
+    use crate::{FuriHalBleProfileBase, FuriHalBleProfileTemplate, GapConfig, GapSvcEventHandler};
+    use alloc::boxed::Box;
     use alloc::sync::Arc;
+    use alloc::vec::Vec;
+    use core::ptr::NonNull;
 
     pub struct HciUartPacket {}
-    pub enum GapConnectionState {
-        Disconnected,
-        Advertising,
-        Connected,
-    }
 
     pub struct BtInner {
         pub thread_id: usize,
         hci_event_channel: Option<HciUartPacket>,
         pub stop: bool,
 
-        pub requested_gap_connection_state: Option<GapConnectionState>,
+        pub config: Option<GapConfig>,
+        pub profile: Option<NonNull<FuriHalBleProfileBase>>,
+        pub handlers: Vec<Box<GapSvcEventHandler>>,
     }
 
     impl BtInner {
@@ -35,7 +37,9 @@ pub(crate) mod bt_inner {
                 thread_id: 0,
                 stop: false,
                 hci_event_channel: None,
-                requested_gap_connection_state: None,
+                config: None,
+                profile: None,
+                handlers: Vec::new(),
             };
             let bt = Arc::new(SpinLock::new(bt, b"Bt inner"));
 
@@ -68,11 +72,7 @@ pub(crate) mod bt_inner {
                     let mut bt = bt.lock(b"bt loop");
 
                     if bt.hci_event_channel.is_some() {
-                        todo!()
-                    }
-
-                    if bt.requested_gap_connection_state.is_some() {
-                        todo!()
+                        todo!("event channel")
                     }
 
                     if bt.stop {
@@ -104,10 +104,42 @@ pub type BtStatusChangedCallback =
 pub fn bt_profile_start(
     bt: *mut Bt,
     profile_template: *const FuriHalBleProfileTemplate,
-    params: FuriHalBleProfileParams,
+    mut params: FuriHalBleProfileParams,
 ) -> *mut FuriHalBleProfileBase {
-    todo!()
+    let bt = unsafe { &*bt };
+
+    let mut bt = bt.lock(b"start profile");
+    let profile_template = unsafe { &*profile_template };
+
+    // via bt->message_queue:
+    // bt_service/bt.c::bt_change_profile
+    // furi_hal_bt.c::furi_hal_bt_change_app
+    // TODO: furi_hal_bt_reinit
+    // furi_hal_bt.c::furi_hal_bt_start_app
+
+    let config_callback = profile_template
+        .get_gap_config
+        .expect("Profile Template get_gap_config callback must be provided");
+    let mut gap_config: GapConfig = Default::default();
+    unsafe { config_callback(&raw mut gap_config, (&raw mut params).cast()) };
+
+    bt.config = Some(gap_config);
+
+    // TODO: gap_init
+
+    let start_callback = profile_template
+        .start
+        .expect("Profile Template start callback must be provided");
+
+    let profile = unsafe { start_callback(params) };
+    bt.profile = Some(
+        NonNull::new(profile)
+            .expect("Profile Template start callback must return a non-null value"),
+    );
+
+    profile
 }
+
 #[doc = "Stop current BLE Profile and restore default profile\n > **Note:** Call of this function leads to 2nd core restart\n\n # Arguments\n\n* `bt` - Bt instance\n\n # Returns\n\ntrue on success"]
 pub fn bt_profile_restore_default(bt: *mut Bt) -> bool {
     todo!()
@@ -120,14 +152,13 @@ pub fn bt_disconnect(bt: *mut Bt) {
     // close_rpc_connection
     // stop advertising
     // TODO: block until disconnected
-    bt.requested_gap_connection_state = Some(bt_inner::GapConnectionState::Disconnected);
 }
 
 #[repr(transparent)]
-#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
+#[derive(Debug, Default, Copy, Clone, Hash, PartialEq, Eq)]
 pub struct GapPairing(pub c_uchar);
 #[repr(C)]
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Default, Copy, Clone)]
 pub struct GapConnectionParamsRequest {
     pub conn_int_min: u16,
     pub conn_int_max: u16,
@@ -135,7 +166,7 @@ pub struct GapConnectionParamsRequest {
     pub supervisor_timeout: u16,
 }
 #[repr(C)]
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Default, Copy, Clone)]
 pub struct GapConfig {
     pub adv_service: GapConfig__bindgen_ty_1,
     pub mfg_data: [u8; 23usize],
@@ -148,7 +179,7 @@ pub struct GapConfig {
     pub conn_param: GapConnectionParamsRequest,
 }
 #[repr(C)]
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Default, Copy, Clone)]
 pub struct GapConfig__bindgen_ty_1 {
     pub UUID_Type: u8,
     pub Service_UUID_16: u16,
@@ -249,8 +280,13 @@ pub const BleEventAckFlowDisable: BleEventAckStatus = BleEventAckStatus(2);
 #[repr(transparent)]
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
 pub struct BleEventAckStatus(pub u8);
+
 #[repr(C)]
-pub struct GapEventHandler {}
+pub struct GapEventHandler {
+    handler: BleSvcEventHandlerCb,
+    context: *mut c_void,
+    index: usize,
+}
 pub type GapSvcEventHandler = GapEventHandler;
 pub type BleSvcEventHandlerCb =
     Option<unsafe extern "C" fn(event: *mut c_void, context: *mut c_void) -> BleEventAckStatus>;
@@ -259,10 +295,44 @@ pub unsafe fn ble_event_dispatcher_register_svc_handler(
     handler: BleSvcEventHandlerCb,
     context: *mut c_void,
 ) -> *mut GapSvcEventHandler {
-    todo!()
+    extern crate alloc;
+    use alloc::boxed::Box;
+
+    let bt_cell = super::BLUETOOTH.lock(b"fetch bt cell for static access to svc handlers");
+    let mut bt = {
+        let bt_arc: &alloc::sync::Arc<Bt> = bt_cell.get().unwrap();
+        let bt = bt_arc.lock(b"register svc handler");
+        bt
+    };
+    let handler = Box::new(GapEventHandler {
+        handler,
+        context,
+        index: bt.handlers.len(),
+    });
+    let res = Box::into_raw(handler);
+    let handler = unsafe { Box::from_raw(res) };
+    bt.handlers.push(handler);
+    res
 }
 pub unsafe fn ble_event_dispatcher_unregister_svc_handler(handler: *mut GapSvcEventHandler) {
-    todo!()
+    extern crate alloc;
+    use alloc::boxed::Box;
+
+    let bt_cell = super::BLUETOOTH.lock(b"fetch bt cell for static access to svc handlers");
+    let mut bt = {
+        let bt_arc: &alloc::sync::Arc<Bt> = bt_cell.get().unwrap();
+        let bt = bt_arc.lock(b"unregister svc handler");
+        bt
+    };
+
+    // NOTE: we need to go through ptr address, as if we try and deref the raw pointer that was
+    // provided to this method, we'd alias
+    let index = bt.handlers.iter().find_map(|h| {
+        let h_ptr = Box::as_ptr(&h);
+        core::ptr::eq(h_ptr, handler).then(|| h.index)
+    }).expect("Could not find a registered handler at address");
+
+    bt.handlers.remove(index);
 }
 
 #[repr(C)]

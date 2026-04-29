@@ -25,7 +25,7 @@ impl<'a, C: BleProfileCallbacks + 'static> Profile<'a, C> {
         let profile_template = Self::get_profile_template();
 
         let profile_super: *mut ProfileSuper<C> = {
-            let context = ProfileSetupContext {
+            let mut context = ProfileSetupContext {
                 callbacks,
                 config: profile_template,
             };
@@ -34,7 +34,7 @@ impl<'a, C: BleProfileCallbacks + 'static> Profile<'a, C> {
                 sys::bt_profile_start(
                     bluetooth.as_ptr(),
                     context.config,
-                    &raw const context as *mut _,
+                    (&raw mut context).cast(),
                 )
             }
             .cast()
@@ -75,6 +75,9 @@ impl<'a, C: BleProfileCallbacks + 'static> Profile<'a, C> {
             let context = unsafe { &mut *(context.cast::<ProfileSetupContext<C>>()) };
             let config = unsafe { &mut *target_config };
 
+            // NOTE: we intentionally provide device_name here instead of ble_local_device_name,
+            // because the latter is more complicated for the consumer to operate on (it requires
+            // knowledge of the leading COMPLETE_LOCAL_NAME byte).
             let device_name = context.callbacks.configure_name(device_name());
             config.adv_name[0] = bt_hci::uuid::ad_types::COMPLETE_LOCAL_NAME.into();
             config.adv_name[1..].copy_from_slice(&device_name);
@@ -150,14 +153,22 @@ impl<T: BleProfileContext<ProfileContext = ()>> BleInitialiseProfileCallbacks fo
     }
 }
 
+pub const FURI_HAL_VERSION_NAME_LENGTH: usize = 8;
+pub const FURI_HAL_VERSION_ARRAY_NAME_LENGTH: usize = FURI_HAL_VERSION_NAME_LENGTH + 1;
+pub const FURI_HAL_VERSION_DEVICE_NAME_LENGTH: usize = 1 + 8 + FURI_HAL_VERSION_ARRAY_NAME_LENGTH;
+
 pub trait BleProfileCallbacks: BleInitialiseProfileCallbacks {
     /// Configure the name of this Bluetooth service, which will be provided in the service's
     /// Device Name characteristic, and when Advertising.
     ///
     /// The default device name will be "Flipper ", followed by the unqique name of the device.
-    fn configure_name(&self, default_device_name: &'static CStr) -> [u8; 17] {
-        let mut target = [0; 17];
-        target.copy_from_slice(default_device_name.to_bytes());
+    fn configure_name(
+        &self,
+        default_device_name: &'static CStr,
+    ) -> [u8; FURI_HAL_VERSION_DEVICE_NAME_LENGTH - 1] {
+        let mut target = [0; FURI_HAL_VERSION_DEVICE_NAME_LENGTH - 1];
+        let bytes = default_device_name.to_bytes();
+        target[..core::cmp::min(FURI_HAL_VERSION_DEVICE_NAME_LENGTH - 1, bytes.len())].copy_from_slice(bytes);
         target
     }
 

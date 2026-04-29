@@ -14,7 +14,8 @@ use core::ffi::CStr;
 use flipperzero::bluetooth::Bluetooth;
 use flipperzero::bluetooth::handler::{BleEventCallbacks, EventBubbling, EventHandler};
 use flipperzero::bluetooth::profile::{
-    BleInitialiseProfileCallbacks, BleProfileCallbacks, BleProfileContext, Profile,
+    BleInitialiseProfileCallbacks, BleProfileCallbacks, BleProfileContext,
+    FURI_HAL_VERSION_DEVICE_NAME_LENGTH, Profile, GapConfig
 };
 use flipperzero::gui::view_port::{ViewPort, ViewPortCallbacks};
 use flipperzero::print;
@@ -38,15 +39,17 @@ impl BleInitialiseProfileCallbacks for ProfileState {
 }
 
 impl BleProfileCallbacks for ProfileState {
-    fn configure_name(&self, default_device_name: &'static CStr) -> [u8; 17] {
+    fn configure_name(&self, default_device_name: &'static CStr) -> [u8; FURI_HAL_VERSION_DEVICE_NAME_LENGTH - 1] {
         let device_name = default_device_name
             .to_str()
             .expect("Device name should be a valid UTF-8 string");
 
         let device_name = device_name.replace("Flipper", "Test");
 
-        let mut target = [0; 17];
-        target.copy_from_slice(&device_name.into_bytes());
+        let mut target = [0; FURI_HAL_VERSION_DEVICE_NAME_LENGTH - 1];
+        let bytes = device_name.into_bytes();
+        target[..core::cmp::min(FURI_HAL_VERSION_DEVICE_NAME_LENGTH - 1, bytes.len())]
+            .copy_from_slice(bytes.as_slice());
         target
     }
 
@@ -54,7 +57,7 @@ impl BleProfileCallbacks for ProfileState {
         bt_hci::uuid::appearance::computer::PALM_SIZE_PCPDA.into()
     }
 
-    fn configure_gap_profile(&mut self, config: &mut flipperzero_sys::GapConfig) {
+    fn configure_gap_profile(&mut self, config: &mut GapConfig) {
         config.mac_address[0] ^= 0b10;
         config.mac_address[2] += 2;
     }
