@@ -26,6 +26,8 @@ pub(crate) mod bt_inner {
         hci_event_channel: Option<HciUartPacket>,
         pub stop: bool,
 
+        // Config only held because we want to match the C code -- we're not doing anything with
+        // it. It might eventually be used to check the role.
         pub config: Option<GapConfig>,
         pub profile: Option<NonNull<FuriHalBleProfileBase>>,
         pub handlers: Vec<Box<GapSvcEventHandler>>,
@@ -123,6 +125,7 @@ pub fn bt_profile_start(
     let mut gap_config: GapConfig = Default::default();
     unsafe { config_callback(&raw mut gap_config, (&raw mut params).cast()) };
 
+    // no special cleanup required for any previous values of config
     bt.config = Some(gap_config);
 
     // TODO: gap_init
@@ -132,17 +135,40 @@ pub fn bt_profile_start(
         .expect("Profile Template start callback must be provided");
 
     let profile = unsafe { start_callback(params) };
-    bt.profile = Some(
+    let previous_profile = bt.profile.replace(
         NonNull::new(profile)
             .expect("Profile Template start callback must return a non-null value"),
     );
+
+    if let Some(previous_profile) = previous_profile {
+        let previous_config = unsafe { &*unsafe { previous_profile.as_ref() }.config };
+
+        let stop_callback = previous_config
+            .stop
+            .expect("Profile Template stop callback must be provided");
+        unsafe { stop_callback(previous_profile.as_ptr()) };
+    }
 
     profile
 }
 
 #[doc = "Stop current BLE Profile and restore default profile\n > **Note:** Call of this function leads to 2nd core restart\n\n # Arguments\n\n* `bt` - Bt instance\n\n # Returns\n\ntrue on success"]
 pub fn bt_profile_restore_default(bt: *mut Bt) -> bool {
-    todo!()
+    let bt = unsafe { &*bt };
+    let mut bt = bt.lock(b"restore profile");
+
+    bt.config = None;
+
+    if let Some(previous_profile) = bt.profile.take() {
+        let previous_config = unsafe { &*unsafe { previous_profile.as_ref() }.config };
+
+        let stop_callback = previous_config
+            .stop
+            .expect("Profile Template stop callback must be provided");
+        unsafe { stop_callback(previous_profile.as_ptr()) };
+    }
+
+    true
 }
 #[doc = "Disconnect from Central\n\n # Arguments\n\n* `bt` - Bt instance"]
 pub fn bt_disconnect(bt: *mut Bt) {
@@ -327,10 +353,14 @@ pub unsafe fn ble_event_dispatcher_unregister_svc_handler(handler: *mut GapSvcEv
 
     // NOTE: we need to go through ptr address, as if we try and deref the raw pointer that was
     // provided to this method, we'd alias
-    let index = bt.handlers.iter().find_map(|h| {
-        let h_ptr = Box::as_ptr(&h);
-        core::ptr::eq(h_ptr, handler).then(|| h.index)
-    }).expect("Could not find a registered handler at address");
+    let index = bt
+        .handlers
+        .iter()
+        .find_map(|h| {
+            let h_ptr = Box::as_ptr(&h);
+            core::ptr::eq(h_ptr, handler).then(|| h.index)
+        })
+        .expect("Could not find a registered handler at address");
 
     bt.handlers.remove(index);
 }

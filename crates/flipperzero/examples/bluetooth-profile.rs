@@ -7,6 +7,7 @@ extern crate alloc;
 extern crate flipperzero_alloc;
 extern crate flipperzero_rt;
 
+use alloc::sync::Arc;
 use bt_hci::FromHciBytes;
 use bt_hci::event::le::{LeConnectionComplete, LeEventKind, LeEventPacket};
 use bt_hci::event::{EventKind, EventPacket};
@@ -15,8 +16,9 @@ use flipperzero::bluetooth::Bluetooth;
 use flipperzero::bluetooth::handler::{BleEventCallbacks, EventBubbling, EventHandler};
 use flipperzero::bluetooth::profile::{
     BleInitialiseProfileCallbacks, BleProfileCallbacks, BleProfileContext,
-    FURI_HAL_VERSION_DEVICE_NAME_LENGTH, Profile, GapConfig
+    FURI_HAL_VERSION_DEVICE_NAME_LENGTH, GapConfig, Profile,
 };
+use flipperzero::gui::Gui;
 use flipperzero::gui::view_port::{ViewPort, ViewPortCallbacks};
 use flipperzero::print;
 use flipperzero_rt::{entry, manifest};
@@ -39,7 +41,10 @@ impl BleInitialiseProfileCallbacks for ProfileState {
 }
 
 impl BleProfileCallbacks for ProfileState {
-    fn configure_name(&self, default_device_name: &'static CStr) -> [u8; FURI_HAL_VERSION_DEVICE_NAME_LENGTH - 1] {
+    fn configure_name(
+        &self,
+        default_device_name: &'static CStr,
+    ) -> [u8; FURI_HAL_VERSION_DEVICE_NAME_LENGTH - 1] {
         let device_name = default_device_name
             .to_str()
             .expect("Device name should be a valid UTF-8 string");
@@ -121,7 +126,34 @@ fn main(_args: Option<&CStr>) -> i32 {
         device_broadcasts_received: 0,
     });
 
-    todo!()
+    let mut gui = Gui::open();
+
+    #[cfg(miri)]
+    let miri_gui = {
+        let view_port_gui: Arc<flipperzero_sys::Gui> = unsafe { Arc::from_raw(gui.as_ptr()) };
+        let miri_gui = view_port_gui.clone();
+        let _ = Arc::into_raw(view_port_gui);
+        miri_gui
+    };
+
+    let view_port = gui.add_view_port(view_port, flipperzero::gui::GuiLayer::Fullscreen);
+
+    #[cfg(miri)]
+    let status = run_until_exit_miri(miri_gui);
+
+    status
+}
+
+#[cfg(miri)]
+fn run_until_exit_miri(gui: Arc<flipperzero_sys::Gui>) -> i32 {
+    use flipperzero::input::miri::send;
+
+    send!(Ok event to gui); // no behaviour bound
+    send!(Down event to gui); // increment count
+    send!(Down event to gui); // increment count
+    send!(Back event to gui); // leave
+
+    0
 }
 
 #[cfg(miri)]

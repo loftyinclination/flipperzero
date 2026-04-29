@@ -418,6 +418,19 @@ pub unsafe fn furi_record_close(name: *const core::ffi::c_char) {
         // We drop Gui here, and then the only remaining reference to the Arc is in the Record,
         // which will go out of scope immediate after this when the record is dropped
         unsafe { Arc::decrement_strong_count(Arc::as_ptr(&gui)) };
+    } else if name == c"bt" {
+        let mut bt_cell = BLUETOOTH.lock(b"record close");
+        let bt = OnceCell::take(&mut bt_cell).expect("BLUETOOTH must have been opened before being closed");
+
+        let bt_thread_id = {
+            let mut bt = bt.lock(b"record close");
+            bt.stop = true;
+            bt.thread_id
+        };
+
+        unsafe { utils::miri_thread_join(bt_thread_id) };
+
+        unsafe { Arc::decrement_strong_count(Arc::as_ptr(&bt)) };
     } else {
         unimplemented!()
     }
