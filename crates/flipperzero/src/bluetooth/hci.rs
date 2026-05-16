@@ -96,3 +96,105 @@ pub fn send_hci_command_and_block_until_status_event<
 
     Ok(())
 }
+
+#[cfg(miri)]
+pub mod miri {
+    #[macro_export]
+    macro_rules! receive {
+        ($item:expr, event from $bt:ident) => {{
+            use bt_hci::event::EventParams;
+            use bt_hci::{FixedSizeValue, FromHciBytes};
+            use core::ptr::NonNull;
+            use flipperzero_sys::bt_inner::HciEventPacket;
+
+            let item = $item;
+
+            let mut bt = $bt.lock(b"send bt message");
+
+            {
+                let msg = alloc::format!("Sending Bluetooth event: {}\n", stringify!($key));
+
+                unsafe extern "Rust" {
+                    pub safe fn miri_write_to_stdout(bytes: &[u8]);
+                }
+                miri_write_to_stdout(msg.as_bytes());
+            }
+
+            fn get_event_code<'a, T: EventParams<'a>>(_t: &T) -> u8 {
+                T::EVENT_CODE
+            }
+
+            let item = HciEventPacket {
+                kind: get_event_code(&item),
+                len: core::mem::size_of_val(&item) as u8,
+                inner: NonNull::from_ref(&item).cast(),
+            };
+
+            flipperzero_sys::BtInner::receive_hci_event(&mut bt, item);
+        }};
+        ($event:expr, le event from $bt:ident) => {{
+            extern crate alloc;
+            use alloc::boxed::Box;
+
+            use bt_hci::event::le::LeEventParams;
+            use bt_hci::event::{EventKind, EventParams};
+            use bt_hci::{FixedSizeValue, FromHciBytes};
+            use core::ptr::NonNull;
+            use flipperzero_sys::bt_inner::HciEventPacket;
+
+            unsafe extern "Rust" {
+                pub safe fn miri_write_to_stdout(bytes: &[u8]);
+            }
+
+            let event = $event;
+
+            let mut bt = $bt.lock(b"send bt message");
+            let subevent_kind = get_subevent_code(&event);
+
+            miri_write_to_stdout(
+                alloc::format!("Sending Bluetooth LE event: {}\n", subevent_kind).as_bytes(),
+            );
+
+            fn get_subevent_code<'a, T: LeEventParams<'a>>(_t: &T) -> u8 {
+                T::SUBEVENT_CODE
+            }
+
+            #[repr(packed)]
+            struct HciLeEventPacket {
+                subevent_kind: u8,
+                data: NonNull<()>,
+            }
+
+            let len = core::mem::size_of_val(&event) as u8 + 1;
+
+            miri_write_to_stdout(
+                alloc::format!(
+                    "Sending Bluetooth LE event: {}/size={}\n",
+                    subevent_kind,
+                    len
+                )
+                .as_bytes(),
+            );
+
+            let le_item = Box::new(HciLeEventPacket {
+                subevent_kind,
+                data: NonNull::from_ref(&event).cast(),
+            });
+
+            let le_item_ptr: NonNull<HciLeEventPacket> =
+                unsafe { NonNull::new_unchecked(Box::as_ptr(&le_item).cast_mut()) };
+
+            let item = HciEventPacket {
+                kind: EventKind::Le.0,
+                len,
+                inner: le_item_ptr.cast(),
+            };
+
+            flipperzero_sys::BtInner::receive_hci_event(&mut bt, item);
+
+            miri_write_to_stdout(b"Finished sending BLuetooth LE event\n");
+        }};
+    }
+
+    pub use receive;
+}

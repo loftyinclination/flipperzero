@@ -7,23 +7,35 @@ use core::ptr::NonNull;
 
 pub type Bt = SpinLock<bt_inner::BtInner>;
 
-pub(crate) mod bt_inner {
+pub mod bt_inner {
     extern crate alloc;
 
     use crate::miri_bindings::utils::*;
 
-    use crate::lock::SpinLock;
+    use crate::lock::{SpinLock, SpinLockGuard};
     use crate::{FuriHalBleProfileBase, FuriHalBleProfileTemplate, GapConfig, GapSvcEventHandler};
     use alloc::boxed::Box;
     use alloc::sync::Arc;
     use alloc::vec::Vec;
+    use core::ffi::c_void;
     use core::ptr::NonNull;
 
-    pub struct HciUartPacket {}
+    enum ChannelState {
+        Full(HciEventPacket),
+        Processing,
+    }
+
+    #[repr(packed)]
+    /// A type erased version of bt_hci::EventPacket
+    pub struct HciEventPacket {
+        pub kind: u8,
+        pub len: u8,
+        pub inner: NonNull<()>,
+    }
 
     pub struct BtInner {
         pub thread_id: usize,
-        hci_event_channel: Option<HciUartPacket>,
+        hci_event_channel: Option<ChannelState>,
         pub stop: bool,
 
         // Config only held because we want to match the C code -- we're not doing anything with
@@ -72,9 +84,10 @@ pub(crate) mod bt_inner {
 
                 loop {
                     let mut bt = bt.lock(b"bt loop");
+                    miri_write_to_stdout(b"BT loop!\n");
 
                     if bt.hci_event_channel.is_some() {
-                        todo!("event channel")
+                        bt.handle_hci_event();
                     }
 
                     if bt.stop {
@@ -88,6 +101,94 @@ pub(crate) mod bt_inner {
             }
 
             bt
+        }
+
+        fn handle_hci_event(&mut self) -> () {
+            miri_write_to_stdout(b"BT process HCI event\n");
+
+            let Some(ChannelState::Full(mut event)) =
+                self.hci_event_channel.replace(ChannelState::Processing)
+            else {
+                panic!(
+                    "Checked before entering this method that the input_channel was populated, and we're the only thread that can take from it"
+                );
+            };
+
+            #[repr(C)]
+            struct HciUartPacket {
+                _type: u8,
+                data: *const c_void,
+            }
+
+            let hci_event_packet_ptr = (&raw mut event).cast::<c_void>();
+
+            let mut hci_uart_packet: HciUartPacket = HciUartPacket {
+                _type: 0, // unused
+                data: hci_event_packet_ptr,
+            };
+
+            let hci_uart_packet_ptr = (&raw mut hci_uart_packet).cast();
+
+            miri_write_to_stdout(
+                alloc::format!(
+                    "Receiving HCI UART packet: addr={:?}\n",
+                    hci_uart_packet_ptr
+                )
+                .as_bytes(),
+            );
+
+            for handler in &self.handlers {
+                let callback = handler
+                    .callback
+                    .expect("Callback must be set when registering handler");
+
+                match unsafe { callback(hci_uart_packet_ptr, handler.context) } {
+                    crate::BleEventNotAck => continue,
+                    crate::BleEventAckFlowEnable => break,
+                    crate::BleEventAckFlowDisable => todo!(),
+                    _ => unreachable!("Event handlers should only return valid responses"),
+                }
+            }
+
+            let Some(ChannelState::Processing) = self.hci_event_channel.take() else {
+                unreachable!(
+                    "Some other thread must have replaced the channel while we were in this method"
+                )
+            };
+        }
+
+        pub fn receive_hci_event(
+            bt_lock: &mut SpinLockGuard<'_, Self>,
+            event: HciEventPacket,
+        ) -> () {
+            miri_write_to_stdout(b"Sending HCI Event packet\n");
+
+            let old_hci_event = bt_lock.hci_event_channel.replace(ChannelState::Full(event));
+            debug_assert!(old_hci_event.is_none());
+
+            bt_lock.unlock();
+            // OPTIMISATION: we unlock the Bluetooth thread here to allow the service thread to
+            // `take` the input event we just inserted. there's no point doing that if we're not
+            // going to yield here to allow that other thread to run.
+            //
+            // even without this, we'll yield in the loop below anyway. additionally, miri is
+            // probably able to randomly switch threads, and so we might get lucky any not need to
+            // loop anyway
+            miri_spin_loop();
+
+            // spin until the other thread takes the input out of the channel
+            loop {
+                bt_lock.reacquire();
+
+                miri_write_to_stdout(b"Waiting for HCI Event packet to be consumed...\n");
+                if bt_lock.hci_event_channel.is_none() {
+                    miri_write_to_stdout(b"!!! was consumed\n");
+                    break;
+                }
+                miri_write_to_stdout(b"not consumed\n");
+                bt_lock.unlock();
+                miri_spin_loop();
+            }
         }
     }
 }
@@ -309,7 +410,7 @@ pub struct BleEventAckStatus(pub u8);
 
 #[repr(C)]
 pub struct GapEventHandler {
-    handler: BleSvcEventHandlerCb,
+    callback: BleSvcEventHandlerCb,
     context: *mut c_void,
     index: usize,
 }
@@ -331,7 +432,7 @@ pub unsafe fn ble_event_dispatcher_register_svc_handler(
         bt
     };
     let handler = Box::new(GapEventHandler {
-        handler,
+        callback: handler,
         context,
         index: bt.handlers.len(),
     });

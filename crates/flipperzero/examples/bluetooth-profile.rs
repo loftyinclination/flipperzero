@@ -2,6 +2,7 @@
 
 #![no_main]
 #![no_std]
+#![feature(box_as_ptr)]
 
 extern crate alloc;
 extern crate flipperzero_alloc;
@@ -129,28 +130,44 @@ fn main(_args: Option<&CStr>) -> i32 {
     let mut gui = Gui::open();
 
     #[cfg(miri)]
-    let miri_gui = {
-        let view_port_gui: Arc<flipperzero_sys::Gui> = unsafe { Arc::from_raw(gui.as_ptr()) };
-        let miri_gui = view_port_gui.clone();
-        let _ = Arc::into_raw(view_port_gui);
-        miri_gui
+    let (miri_gui, miri_bt) = {
+        unsafe { Arc::increment_strong_count(gui.as_ptr()) };
+        let miri_gui: Arc<flipperzero_sys::Gui> = unsafe { Arc::from_raw(gui.as_ptr()) };
+
+        unsafe { Arc::increment_strong_count(bluetooth.as_ptr()) };
+        let miri_bt = unsafe { Arc::from_raw(bluetooth.as_ptr()) };
+
+        (miri_gui, miri_bt)
     };
 
     let view_port = gui.add_view_port(view_port, flipperzero::gui::GuiLayer::Fullscreen);
 
     #[cfg(miri)]
-    let status = run_until_exit_miri(miri_gui);
+    let status = run_until_exit_miri(miri_gui, miri_bt);
 
     status
 }
 
 #[cfg(miri)]
-fn run_until_exit_miri(gui: Arc<flipperzero_sys::Gui>) -> i32 {
+fn run_until_exit_miri(gui: Arc<flipperzero_sys::Gui>, bt: Arc<flipperzero_sys::Bt>) -> i32 {
+    use bt_hci::event::Vendor;
+    use flipperzero::bluetooth::bt_hci::event::le::{LeAdvertisingReport, LeEvent};
+    use flipperzero::bluetooth::hci::miri::receive;
     use flipperzero::input::miri::send;
+    use bt_hci::param::RemainingBytes;
 
-    send!(Ok event to gui); // no behaviour bound
-    send!(Down event to gui); // increment count
-    send!(Down event to gui); // increment count
+    {
+        let reports = bt_hci::param::LeAdvReports::default();
+
+        receive!(LeAdvertisingReport{ reports }, le event from bt);
+    }
+
+    {
+        let reports = bt_hci::param::LeAdvReports::default();
+
+        receive!(LeAdvertisingReport{ reports }, le event from bt);
+    }
+
     send!(Back event to gui); // leave
 
     0
