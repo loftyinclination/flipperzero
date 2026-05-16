@@ -37,19 +37,26 @@ impl<'bluetooth, 'profile, PC: BleProfileCallbacks, BEC: BleEventCallbacks>
             let context = unsafe { &mut *(context as *mut Context<C>) };
             let callbacks = &mut context.callbacks;
 
-            // event here is a hci_uart_pckt, and so the first byte is the type of that uart packet
-            let data_len = {
-                let data_len_ptr = unsafe { event.offset(2) };
-                let data_len = unsafe { *data_len_ptr.cast::<u8>() };
-                data_len as usize
-            };
-
             let event: &[u8] = {
-                let complete_data_ptr = unsafe { event.offset(1) };
+                #[repr(C)]
+                struct HciUartPacket {
+                    kind: u8,
+                    data: *const c_void,
+                }
+
+                let hci_uart_packet = unsafe { &*event.cast::<HciUartPacket>() };
+                let hci_event_packet_ptr: *const c_void = hci_uart_packet.data;
+
+                let data_len = {
+                    // and then past hci event kind
+                    let data_len_ptr = unsafe { hci_event_packet_ptr.offset(1) };
+                    let data_len = unsafe { *data_len_ptr.cast::<u8>() };
+                    data_len as usize
+                };
+
                 unsafe {
                     core::slice::from_raw_parts(
-                        // offset 1 to get past the uart_pckt Type field
-                        complete_data_ptr.cast::<u8>(),
+                        hci_event_packet_ptr.cast::<u8>(),
                         // add 2, as this is plen, and we want to include evt and plen in the EventPacket that
                         // is parsed
                         data_len + 2,
