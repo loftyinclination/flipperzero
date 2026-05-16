@@ -23,7 +23,7 @@ pub struct EventHandler<'bluetooth, 'profile, PC: BleProfileCallbacks, BEC: BleE
     handler: NonNull<sys::GapEventHandler>,
     profile: &'profile Profile<'bluetooth, PC>,
     // TODO: maybe lock?
-    context: Context<BEC>,
+    context: Box<Context<BEC>>,
 }
 
 impl<'bluetooth, 'profile, PC: BleProfileCallbacks, BEC: BleEventCallbacks>
@@ -92,16 +92,16 @@ impl<'bluetooth, 'profile, PC: BleProfileCallbacks, BEC: BleEventCallbacks>
             }
         }
 
-        let mut context = Context {
+        let mut context = Box::new(Context {
             callbacks,
             event_flag: Default::default(),
             pattern_override: None,
-        };
+        });
 
         let handler = unsafe {
             sys::ble_event_dispatcher_register_svc_handler(
                 Some(dispatch_ble_event::<BEC>),
-                (&raw mut context).cast()
+                Box::as_ptr(&context).cast_mut().cast(),
             )
         };
 
