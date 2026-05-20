@@ -1,7 +1,9 @@
 use alloc::boxed::Box;
+use alloc::sync::Arc;
 
 use crate::bluetooth::profile::{BleProfileCallbacks, Profile};
 use crate::furi::event_flag::EventFlag;
+use crate::furi::sync::Mutex;
 use crate::furi::time::FuriDuration;
 use crate::{error, warn};
 use bt_hci::FromHciBytes;
@@ -16,14 +18,13 @@ const FLAGS: u32 = 1;
 struct Context<BEC: BleEventCallbacks> {
     callbacks: BEC,
     event_flag: EventFlag,
-    pattern_override: Option<Box<dyn ResponsePattern>>,
+    pattern_override: Mutex<Option<Box<dyn ResponsePattern>>>,
 }
 
 pub struct EventHandler<'bluetooth, 'profile, PC: BleProfileCallbacks, BEC: BleEventCallbacks> {
     handler: NonNull<sys::GapEventHandler>,
     profile: &'profile Profile<'bluetooth, PC>,
-    // TODO: maybe lock?
-    context: Box<Context<BEC>>,
+    context: Arc<Context<BEC>>,
 }
 
 impl<'bluetooth, 'profile, PC: BleProfileCallbacks, BEC: BleEventCallbacks>
@@ -37,40 +38,40 @@ impl<'bluetooth, 'profile, PC: BleProfileCallbacks, BEC: BleEventCallbacks>
             let context = unsafe { &mut *(context as *mut Context<C>) };
             let callbacks = &mut context.callbacks;
 
-            let event: &[u8] = {
-                #[repr(C)]
-                struct HciUartPacket {
-                    kind: u8,
-                    data: *const c_void,
-                }
+            #[repr(packed, C)]
+            struct HciUartPacket {
+                kind: u8,
+                data: *const (),
+            }
 
-                let hci_uart_packet = unsafe { &*event.cast::<HciUartPacket>() };
-                let hci_event_packet_ptr: *const c_void = hci_uart_packet.data;
+            let hci_uart_packet = unsafe { &*event.cast::<HciUartPacket>() };
+            let hci_event_packet_ptr = hci_uart_packet.data.cast::<HciEventPacket>();
+            let hci_event_packet = unsafe { &*hci_event_packet_ptr };
 
-                let data_len = {
-                    // and then past hci event kind
-                    let data_len_ptr = unsafe { hci_event_packet_ptr.offset(1) };
-                    let data_len = unsafe { *data_len_ptr.cast::<u8>() };
-                    data_len as usize
-                };
+            #[repr(packed, C)]
+            struct HciEventPacket {
+                kind: u8,
+                len: u8,
+                // data: [u8; 1],
+            }
 
-                unsafe {
-                    core::slice::from_raw_parts(
-                        hci_event_packet_ptr.cast::<u8>(),
-                        // add 2, as this is plen, and we want to include evt and plen in the EventPacket that
-                        // is parsed
-                        data_len + 2,
-                    )
-                }
-            };
+            let data_len = hci_event_packet.len as usize;
+
+            let event =
+                unsafe { core::slice::from_raw_parts(hci_event_packet_ptr.cast(), 2 + data_len) };
 
             match EventPacket::from_hci_bytes_complete(event) {
                 Ok(event_packet) => {
-                    if let Some(pattern) = &context.pattern_override {
-                        todo!()
+                    {
+                        let pattern_guard: &mut Option<_> = &mut *context.pattern_override.lock();
+                        if let Some(pattern) = pattern_guard {
+                            todo!("pattern guard")
+                        }
                     }
 
-                    match callbacks.handle_event(event_packet) {
+                    let event_handled = callbacks.handle_event(event_packet);
+
+                    match event_handled {
                         // NOTE: we don't send out BleEventAckFlowDisable commands because that just
                         // tells the stm32_copro firmware to wait before sending the data again, which
                         // means we'd just end up back here.
@@ -92,16 +93,16 @@ impl<'bluetooth, 'profile, PC: BleProfileCallbacks, BEC: BleEventCallbacks>
             }
         }
 
-        let mut context = Box::new(Context {
+        let mut context = Arc::new(Context {
             callbacks,
             event_flag: Default::default(),
-            pattern_override: None,
+            pattern_override: Mutex::new(None),
         });
 
         let handler = unsafe {
             sys::ble_event_dispatcher_register_svc_handler(
                 Some(dispatch_ble_event::<BEC>),
-                Box::as_ptr(&context).cast_mut().cast(),
+                Arc::as_ptr(&context).cast_mut().cast(),
             )
         };
 
@@ -115,12 +116,11 @@ impl<'bluetooth, 'profile, PC: BleProfileCallbacks, BEC: BleEventCallbacks>
     }
 
     pub(crate) fn wait_and_consume_response(&mut self, response: impl ResponsePattern + 'static) {
-        assert!(
-            self.context
-                .pattern_override
-                .replace(Box::new(response))
-                .is_none()
-        );
+        {
+            let pattern_guard: &mut Option<_> = &mut *self.context.pattern_override.lock();
+            let old_pattern = pattern_guard.replace(Box::new(response));
+            assert!(old_pattern.is_none());
+        }
 
         match self
             .context

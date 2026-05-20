@@ -18,19 +18,31 @@ pub mod bt_inner {
     use alloc::sync::Arc;
     use alloc::vec::Vec;
     use core::ffi::c_void;
+    use core::mem::MaybeUninit;
     use core::ptr::NonNull;
 
     enum ChannelState {
-        Full(HciEventPacket),
+        Full(*const HciEventPacket),
         Processing,
     }
 
-    #[repr(packed)]
+    #[repr(packed, C)]
     /// A type erased version of bt_hci::EventPacket
     pub struct HciEventPacket {
         pub kind: u8,
         pub len: u8,
-        pub inner: NonNull<()>,
+        // NOTE: this pointer is only here for type erasure, not for indirection. whatever is
+        // pointed to here must be part of the same allocation
+        pub inner: [u8; 1],
+    }
+
+    impl core::fmt::Debug for HciEventPacket {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            f.debug_struct("HciEventPacket")
+                .field("kind", &self.kind)
+                .field("len", &self.len)
+                .finish()
+        }
     }
 
     pub struct BtInner {
@@ -106,7 +118,7 @@ pub mod bt_inner {
         fn handle_hci_event(&mut self) -> () {
             miri_write_to_stdout(b"BT process HCI event\n");
 
-            let Some(ChannelState::Full(mut event)) =
+            let Some(ChannelState::Full(event)) =
                 self.hci_event_channel.replace(ChannelState::Processing)
             else {
                 panic!(
@@ -114,28 +126,31 @@ pub mod bt_inner {
                 );
             };
 
-            #[repr(C)]
+            miri_write_to_stdout(
+                alloc::format!("Receiving HCI Event packet: {:?}\n", event).as_bytes(),
+            );
+
+            /*
+            event:
+            | type | data   | hci_uart_packet
+            | u8   | [u8;1] |
+                   | kind   | len | data   | hci_event_packet
+                   | u8     | u8  | [u8;1] |
+                                  | data.0 | data.1 | data.2 | ... | data.len - 1 | event_packet data
+            */
+
+            #[repr(packed, C)]
             struct HciUartPacket {
                 _type: u8,
-                data: *const c_void,
+                data: *const (),
             }
 
-            let hci_event_packet_ptr = (&raw mut event).cast::<c_void>();
-
-            let mut hci_uart_packet: HciUartPacket = HciUartPacket {
-                _type: 0, // unused
-                data: hci_event_packet_ptr,
+            let mut hci_uart_packet = HciUartPacket {
+                _type: 0,
+                data: event.cast(),
             };
 
             let hci_uart_packet_ptr = (&raw mut hci_uart_packet).cast();
-
-            miri_write_to_stdout(
-                alloc::format!(
-                    "Receiving HCI UART packet: addr={:?}\n",
-                    hci_uart_packet_ptr
-                )
-                .as_bytes(),
-            );
 
             for handler in &self.handlers {
                 let callback = handler
@@ -159,7 +174,7 @@ pub mod bt_inner {
 
         pub fn receive_hci_event(
             bt_lock: &mut SpinLockGuard<'_, Self>,
-            event: HciEventPacket,
+            event: *const HciEventPacket,
         ) -> () {
             miri_write_to_stdout(b"Sending HCI Event packet\n");
 
@@ -180,12 +195,9 @@ pub mod bt_inner {
             loop {
                 bt_lock.reacquire();
 
-                miri_write_to_stdout(b"Waiting for HCI Event packet to be consumed...\n");
                 if bt_lock.hci_event_channel.is_none() {
-                    miri_write_to_stdout(b"!!! was consumed\n");
                     break;
                 }
-                miri_write_to_stdout(b"not consumed\n");
                 bt_lock.unlock();
                 miri_spin_loop();
             }
@@ -242,7 +254,7 @@ pub fn bt_profile_start(
     );
 
     if let Some(previous_profile) = previous_profile {
-        let previous_config = unsafe { &*unsafe { previous_profile.as_ref() }.config };
+        let previous_config = unsafe { &*previous_profile.as_ref().config };
 
         let stop_callback = previous_config
             .stop
@@ -261,7 +273,7 @@ pub fn bt_profile_restore_default(bt: *mut Bt) -> bool {
     bt.config = None;
 
     if let Some(previous_profile) = bt.profile.take() {
-        let previous_config = unsafe { &*unsafe { previous_profile.as_ref() }.config };
+        let previous_config = unsafe { &*previous_profile.as_ref().config };
 
         let stop_callback = previous_config
             .stop

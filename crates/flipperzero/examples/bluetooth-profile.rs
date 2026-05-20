@@ -10,7 +10,7 @@ extern crate flipperzero_rt;
 
 use alloc::sync::Arc;
 use bt_hci::FromHciBytes;
-use bt_hci::event::le::{LeConnectionComplete, LeEventKind, LeEventPacket};
+use bt_hci::event::le::{LeAdvertisingReport, LeConnectionComplete, LeEvent, LeEventPacket};
 use bt_hci::event::{EventKind, EventPacket};
 use core::ffi::CStr;
 use flipperzero::bluetooth::Bluetooth;
@@ -21,7 +21,7 @@ use flipperzero::bluetooth::profile::{
 };
 use flipperzero::gui::Gui;
 use flipperzero::gui::view_port::{ViewPort, ViewPortCallbacks};
-use flipperzero::print;
+use flipperzero::println;
 use flipperzero_rt::{entry, manifest};
 
 manifest!(name = "Rust Bluetooth Profile example");
@@ -75,34 +75,46 @@ impl BleEventCallbacks for HandlerState {
     fn handle_event(&mut self, event_packet: EventPacket) -> EventBubbling {
         match event_packet.kind {
             EventKind::Le => {
-                let event_packet = LeEventPacket::from_hci_bytes_complete(event_packet.data)
-                    .expect("Events originate in the STM32 firmware and should always be valid, and should be received by the flipper in full");
-                match event_packet.kind {
-                    LeEventKind::LeConnectionComplete => {
-                        let connection_complete_event =
-                            LeConnectionComplete::from_hci_bytes_complete(event_packet.data)
-                                .expect("Events originate in the STM32 firmware and should always be valid, and should be received by the flipper in full");
+                let le_event = LeEventPacket::from_hci_bytes_complete(event_packet.data)
+                    .expect("Events originate in the STM32 firmware and should always be valid, and should be received by the flipper in full")
+                    .try_into()
+                    .expect("All events should be parsable into LeEvent");
 
-                        todo!();
-
-                        EventBubbling::ReturnForAdditionalProcessing
+                match le_event {
+                    LeEvent::LeConnectionComplete(data) => {
+                        self.handle_connection_complete_event(data)
                     }
-                    LeEventKind::LeAdvertisingReport => {
-                        // NOTE: this isn't currently reachable, as advertising reports can only be
-                        // received in response to scanning, which is only possible in Central
-                        // mode, and the flipper firmware only supports Peripheral connections at
-                        // the moment.
-                        print!("Advertising report received");
-                        EventBubbling::Consumed
+                    LeEvent::LeAdvertisingReport(reports) => {
+                        self.handle_advertising_report(reports)
                     }
                     _ => EventBubbling::ReturnForAdditionalProcessing,
                 }
             }
             EventKind::Vendor => {
-                todo!()
+                todo!("vendor specific event")
             }
             _ => EventBubbling::ReturnForAdditionalProcessing,
         }
+    }
+}
+
+impl HandlerState {
+    fn handle_advertising_report(&mut self, reports: LeAdvertisingReport<'_>) -> EventBubbling {
+        // NOTE: this isn't currently reachable, as advertising reports can only be
+        // received in response to scanning, which is only possible in Central
+        // mode, and the flipper firmware only supports Peripheral connections at
+        // the moment.
+
+        for report in reports.reports.iter() {
+            println!("Advertising report received");
+        }
+        EventBubbling::Consumed
+    }
+
+    fn handle_connection_complete_event(&mut self, data: LeConnectionComplete) -> EventBubbling {
+        todo!("connection complete");
+
+        EventBubbling::ReturnForAdditionalProcessing
     }
 }
 
@@ -121,13 +133,13 @@ fn main(_args: Option<&CStr>) -> i32 {
 
     let profile = Profile::start(ProfileState {}, &bluetooth);
 
-    let handler = EventHandler::subscribe(&profile, HandlerState {});
+    let _handler = EventHandler::subscribe(&profile, HandlerState {});
 
     let view_port = ViewPort::new(ViewPortState {
         device_broadcasts_received: 0,
     });
 
-    let mut gui = Gui::open();
+    let gui = Gui::open();
 
     #[cfg(miri)]
     let (miri_gui, miri_bt) = {
@@ -140,7 +152,7 @@ fn main(_args: Option<&CStr>) -> i32 {
         (miri_gui, miri_bt)
     };
 
-    let view_port = gui.add_view_port(view_port, flipperzero::gui::GuiLayer::Fullscreen);
+    let _view_port = gui.add_view_port(view_port, flipperzero::gui::GuiLayer::Fullscreen);
 
     #[cfg(miri)]
     let status = run_until_exit_miri(miri_gui, miri_bt);
@@ -150,11 +162,9 @@ fn main(_args: Option<&CStr>) -> i32 {
 
 #[cfg(miri)]
 fn run_until_exit_miri(gui: Arc<flipperzero_sys::Gui>, bt: Arc<flipperzero_sys::Bt>) -> i32 {
-    use bt_hci::event::Vendor;
-    use flipperzero::bluetooth::bt_hci::event::le::{LeAdvertisingReport, LeEvent};
+    use flipperzero::bluetooth::bt_hci::event::le::LeAdvertisingReport;
     use flipperzero::bluetooth::hci::miri::receive;
     use flipperzero::input::miri::send;
-    use bt_hci::param::RemainingBytes;
 
     {
         let reports = bt_hci::param::LeAdvReports::default();
@@ -165,7 +175,7 @@ fn run_until_exit_miri(gui: Arc<flipperzero_sys::Gui>, bt: Arc<flipperzero_sys::
     {
         let reports = bt_hci::param::LeAdvReports::default();
 
-        receive!(LeAdvertisingReport{ reports }, le event from bt);
+        let _ = receive!(LeAdvertisingReport{ reports }, le event from bt);
     }
 
     send!(Back event to gui); // leave
