@@ -1,3 +1,6 @@
+use crate::miri_bindings::utils::miri_write_to_stdout;
+use core::slice;
+
 #[repr(transparent)]
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
 pub struct FuriWait(pub core::ffi::c_uint);
@@ -269,7 +272,10 @@ pub unsafe fn furi_thread_list_get_at(
 
 #[doc = "Write data to buffered standard output.\n\n > **Note:** You can also use the standard C `putc`, `puts`, `printf` and friends.\n\n # Arguments\n\n* `data` (direction in) - pointer to the data to be written\n * `size` (direction in) - data size in bytes\n # Returns\n\nnumber of bytes that was actually written"]
 pub unsafe fn furi_thread_stdout_write(data: *const core::ffi::c_char, size: usize) -> usize {
-    todo!()
+    let source = unsafe { slice::from_raw_parts(data, size) };
+    let s = unsafe { str::from_utf8_unchecked(source) };
+    miri_write_to_stdout(s.as_bytes());
+    size
 }
 #[doc = "Flush buffered data to standard output.\n\n # Returns\n\nerror code value"]
 pub unsafe fn furi_thread_stdout_flush() -> i32 {
