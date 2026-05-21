@@ -40,11 +40,25 @@ pub fn send_hci_command_and_block_until_command_complte_event<
     let params = payload.params();
     let mut retval = C::ReturnBuf::new();
 
+    let cparam = {
+        let data = alloc::boxed::Box::<[u8]>::new_zeroed_slice(params.size());
+        let mut data = unsafe { data.assume_init() };
+
+        {
+            let data: &mut [u8] = &mut data;
+            params
+                .write_hci(data)
+                .expect("The slice was created with the size specified for the event");
+        }
+
+        data
+    };
+
     let mut hci_request = sys::hci_request {
         ogf: opcode.group().to_raw() as u16,
         ocf: opcode.cmd(),
         event: 0, // UNUSED
-        cparam: ptr::from_ref(params).cast_mut().cast(),
+        cparam: cparam.as_ptr().cast_mut().cast(),
         clen: params.size() as i32,
         rparam: (&raw mut retval).cast(),
         rlen: C::ReturnBuf::LEN as i32,
@@ -77,11 +91,25 @@ pub fn send_hci_command_and_block_until_status_event<
     let opcode = <C as Cmd>::OPCODE;
     let params = payload.params();
 
+    let cparam = {
+        let data = alloc::boxed::Box::<[u8]>::new_zeroed_slice(params.size());
+        let mut data = unsafe { data.assume_init() };
+
+        {
+            let data: &mut [u8] = &mut data;
+            params
+                .write_hci(data)
+                .expect("The slice was created with the size specified for the event");
+        }
+
+        data
+    };
+
     let mut hci_request = sys::hci_request {
         ogf: opcode.group().to_raw() as u16,
         ocf: opcode.cmd(),
         event: 0, // UNUSED
-        cparam: ptr::from_ref(params).cast_mut().cast(),
+        cparam: cparam.as_ptr().cast_mut().cast(),
         clen: params.size() as i32,
         rparam: ptr::null_mut(),
         rlen: 0,
@@ -179,7 +207,9 @@ pub mod miri {
 
                 {
                     let data: &mut [u8] = &mut data;
-                    le_event.write_hci(data).expect("The slice was created with the size specified for the event");
+                    le_event
+                        .write_hci(data)
+                        .expect("The slice was created with the size specified for the event");
                 }
 
                 data
