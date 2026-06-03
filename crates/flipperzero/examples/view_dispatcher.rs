@@ -7,6 +7,7 @@ extern crate alloc;
 extern crate flipperzero_alloc;
 extern crate flipperzero_rt;
 
+use alloc::format;
 #[cfg(miri)]
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -83,7 +84,10 @@ impl ViewCallbacks for CounterCallback<'_> {
                     self.counter = 0;
                 }
 
-                miri_write_to_stdout(b"Counter up\n");
+                miri_write_to_stdout(format!(
+                    "Up event handled by Counter view: value has been incremented and is now {}\n",
+                    self.counter,
+                ).as_bytes());
 
                 EventBubbling::Consumed
             }
@@ -94,12 +98,17 @@ impl ViewCallbacks for CounterCallback<'_> {
                     self.counter -= 1;
                 }
 
-                miri_write_to_stdout(b"Counter down\n");
+                miri_write_to_stdout(format!(
+                    "Down event handled by Counter view: value has been decremented and is now {}\n",
+                    self.counter,
+                ).as_bytes());
 
                 EventBubbling::Consumed
             }
             InputKey::Right => {
-                miri_write_to_stdout(b"Counter right\n");
+                miri_write_to_stdout(
+                    b"Right event handled by Counter view: Switching to view 1 (maze view)\n",
+                );
 
                 self.state.switch_to_view(1);
 
@@ -108,17 +117,16 @@ impl ViewCallbacks for CounterCallback<'_> {
             InputKey::Left => todo!(),
             InputKey::Ok => {
                 self.counter = 0;
-
-                miri_write_to_stdout(b"Counter OK\n");
+                miri_write_to_stdout(b"Ok event handled by Counter view: Counter reset to zero\n");
 
                 EventBubbling::Consumed
             }
             InputKey::Back => {
                 if self.counter == 0 {
-                    miri_write_to_stdout(b"Counter back when counter was 0\n");
+                    miri_write_to_stdout(b"Back event handled by Counter view: Counter was zero, so switching to parent view\n");
                     EventBubbling::ReturnForAdditionalProcessing
                 } else {
-                    miri_write_to_stdout(b"Counter back when counter was not 0\n");
+                    miri_write_to_stdout(b"Back event handled by Counter view: WARNING: Counter was not zero, so not processing\n");
                     EventBubbling::Consumed
                 }
             }
@@ -254,6 +262,10 @@ fn main(_args: Option<&CStr>) -> i32 {
     #[cfg(miri)]
     let status = run_until_exit_miri(view_dispatcher, miri_gui);
 
+    drop(submenu);
+    drop(maze_view);
+    drop(counter_view);
+
     status
 }
 
@@ -301,9 +313,12 @@ extern "Rust" fn send_events_for_miri(data: *mut ()) {
     send!(Ok event to gui); // enter the counter view
 
     send!(Up event to gui); // counter increase
-    send!(Back event to gui); // reset counter
+    send!(Ok event to gui); // reset counter
     send!(Down event to gui 2 times); // counter decrease
+    send!(Ok event to gui); // reset counter
     send!(Back event to gui); // exit back to submenu
+
+    send!(Back event to gui); // quit
 }
 
 #[cfg(miri)]
