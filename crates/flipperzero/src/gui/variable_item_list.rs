@@ -7,6 +7,8 @@ use crate::gui::view_dispatcher::{ViewDispatcher, ViewDispatcherCallbacks, ViewD
 use alloc::rc::Rc;
 use alloc::sync::Arc;
 use alloc::{boxed::Box, vec::Vec};
+use core::default;
+use core::fmt::Debug;
 use core::mem::MaybeUninit;
 use core::ops::{Deref, DerefMut};
 use core::{
@@ -34,34 +36,73 @@ unsafe impl Send for VariableItemListInner {}
 pub struct VariableItem {
     list_index: usize,
     inner: NonNull<sys::VariableItem>,
+    parent: NonNull<sys::VariableItemList>,
+}
+
+impl Debug for VariableItem {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("VariableItem")
+            .field("list_index", &self.list_index)
+            .finish()
+    }
 }
 
 unsafe impl Send for VariableItem {}
 
-type CallbackContext<'a, T> = Mutex<CallbackContextInner<'a, T>>;
-
-struct CallbackContextInner<'a, T: 'a> {
-    callback: T,
-    items: Vec<VariableItemType<'a>>,
+struct CallbackContext<'a, T: 'a> {
+    callback: Mutex<T>,
+    items: Mutex<Vec<VariableItemType<'a>>>,
 }
 
-impl<C> CallbackContextInner<'_, C> {
-    fn get_item_at_index(&self, index: u32) -> &VariableItem {
-        let item_type = self
-            .items
-            .get(index as usize)
-            .expect("No item with given index in local collection");
-
-        match item_type {
-            VariableItemType::Plain(item) => &item,
-            VariableItemType::WithValues(value_context) => unsafe {
-                &value_context.item
-            },
-        }
+impl<T: Debug> Debug for CallbackContext<'_, T> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("CallbackContext")
+            .field("callback", &self.callback)
+            .field("items", &self.items)
+            .finish()
     }
 }
 
-enum VariableItemType<'a> {
+impl<'a, T> CallbackContext<'a, T> {
+    fn get_item_at_index(
+        &self,
+        index: u32,
+    ) -> lock_api::MappedMutexGuard<'_, crate::furi::sync::FuriMutex, VariableItemType<'a>> {
+        let Ok(res) = lock_api::MutexGuard::try_map(self.items.lock(), |context| {
+            context.get_mut(index as usize)
+        }) else {
+            unreachable!(
+                "List index was gotten from inserting, so there should always be an item at the index"
+            )
+        };
+
+        res
+    }
+}
+
+pub struct VariableItemRef<'a, T> {
+    context: Arc<CallbackContext<'a, T>>,
+    list_index: usize,
+}
+
+impl<'a, T> VariableItemRef<'a, T> {
+    pub fn get_mut(
+        &self,
+    ) -> lock_api::MappedMutexGuard<'_, crate::furi::sync::FuriMutex, VariableItemType<'a>> {
+        let Ok(res) = lock_api::MutexGuard::try_map(self.context.items.lock(), |context| {
+            context.get_mut(self.list_index)
+        }) else {
+            unreachable!(
+                "List index was gotten from inserting, so there should always be an item at the index"
+            )
+        };
+
+        res
+    }
+}
+
+#[derive(Debug)]
+pub enum VariableItemType<'a> {
     Plain(VariableItem),
     // NOTE: we need to wrap the callbacks context in a smart pointer here, so that we can point to
     // it from the FFI callback
@@ -70,11 +111,18 @@ enum VariableItemType<'a> {
 
 pub struct UniqueCallbackForEachItem<'a>(Vec<(usize, Box<dyn Callback + 'a>)>);
 
-impl<'a> UniqueCallbackForEachItem<'a> {
-    fn get_callback_for_item_at_index(&self, index: u32) -> Option<&Box<dyn Callback + 'a>> {
-        self.0
-            .iter()
-            .find_map(|(item_id, callback)| (*item_id == index as usize).then_some(callback))
+impl<'a> CallbackContext<'a, UniqueCallbackForEachItem<'a>> {
+    fn try_get_callback_for_item_at_index(
+        &self,
+        index: u32,
+    ) -> Option<lock_api::MappedMutexGuard<'_, crate::furi::sync::FuriMutex, Box<dyn Callback + 'a>>>
+    {
+        lock_api::MutexGuard::try_map(self.callback.lock(), |context| {
+            context
+                .0
+                .iter_mut()
+                .find_map(|(item_id, callback)| (*item_id == index as usize).then_some(callback))
+        }).ok()
     }
 }
 
@@ -82,16 +130,34 @@ pub struct VariableItemValueCallbacksContext<'a> {
     callbacks: Box<dyn OnCurrentValueTextChangedCallbacks + 'a>,
     value_label: FuriString,
     item: VariableItem,
+    number_of_options: u8,
+}
+
+impl Debug for VariableItemValueCallbacksContext<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("VariableItemValueCallbacksContext")
+            .field("value_label", &self.value_label)
+            .field("list_index", &self.item.list_index)
+            .finish()
+    }
 }
 
 pub trait Callback: Send {
     /// Called on a (short) Ok input event.
-    fn on_click(&self, item: &VariableItem) -> ();
+    fn on_click(&self, item: &mut VariableItemType<'_>) -> ();
 }
 
 pub trait OnCurrentValueTextChangedCallbacks: Send {
+    /// Called in response to the user pressing changing this [Variable Item's](VariableItem)
+    /// selected value (by pressing left or right while this item is selected in the list). Should
+    /// return the new value for the option.
+    ///
+    /// Note that this is not invoked when the value is changed via methods on
+    /// [VariableItemValueCallbacksContext].
     fn get_new_label(&self, item: &VariableItem, value: u8) -> FuriString;
 
+    /// An optional callback that allows for changes to the value to have further impact, in
+    /// addition to just having the label change.
     fn react_to_change(&self) -> () {}
 }
 
@@ -110,27 +176,25 @@ impl<'callbacks> VariableItemList<'callbacks, UniqueCallbackForEachItem<'callbac
             let context: Arc<CallbackContext<UniqueCallbackForEachItem>> =
                 unsafe { Arc::from_raw(context.cast()) };
 
-            let mut context_guard = context.lock();
-
-            let Some(callback_for_item) =
-                context_guard.callback.get_callback_for_item_at_index(index)
+            let Some(callback_for_item) = context.try_get_callback_for_item_at_index(index)
             else {
                 return;
             };
-            let item = context_guard.get_item_at_index(index);
 
-            callback_for_item.on_click(item);
+            let mut item = context.get_item_at_index(index);
+
+            callback_for_item.on_click(&mut item);
         }
 
-        let callback_context = CallbackContextInner {
-            callback: UniqueCallbackForEachItem(Vec::new()),
-            items: Vec::new(),
+        let callback_context = CallbackContext {
+            callback: Mutex::new(UniqueCallbackForEachItem(Vec::new())),
+            items: Default::default(),
         };
 
         let res = Self {
             inner,
             strings: Vec::new(),
-            context: Arc::new(Mutex::new(callback_context)),
+            context: Arc::new(callback_context),
         };
 
         unsafe {
@@ -148,19 +212,33 @@ impl<'callbacks> VariableItemList<'callbacks, UniqueCallbackForEachItem<'callbac
     // Unless we want to accept a CStr and return something with a lifetime, and require the user
     // to keep track of that, this is the best we've got.
     /// Push a plaintext item to the end of the variable item list.
-    pub fn push_item_plaintext(&mut self, label: FuriString) -> () {
-        let mut context = self.context.lock();
+    pub fn push_item_plaintext(
+        &mut self,
+        label: FuriString,
+    ) -> VariableItemRef<'callbacks, UniqueCallbackForEachItem<'callbacks>> {
+        let mut items_guard = self.context.items.lock();
 
         let variable_item = unsafe {
             sys::variable_item_list_add(self.as_raw(), label.as_c_ptr(), 0, None, ptr::null_mut())
         };
 
         let inner = unsafe { NonNull::new_unchecked(variable_item) };
-        let list_index = context.items.len();
-        let item = VariableItem { inner, list_index };
+        let list_index = items_guard.len();
+        let item = VariableItem {
+            inner,
+            list_index,
+            parent: self.inner.0.clone(),
+        };
 
-        context.items.push(VariableItemType::Plain(item));
+        let res = items_guard.push_mut(VariableItemType::Plain(item));
         self.strings.push(label);
+
+        drop(items_guard);
+
+        VariableItemRef {
+            context: self.context.clone(),
+            list_index,
+        }
     }
 
     /// Push an item to the end of the variable item list that, when clicked on, invokes a
@@ -169,21 +247,36 @@ impl<'callbacks> VariableItemList<'callbacks, UniqueCallbackForEachItem<'callbac
         &mut self,
         label: FuriString,
         callback: C,
-    ) -> () {
-        let mut context = self.context.lock();
+    ) -> VariableItemRef<'callbacks, UniqueCallbackForEachItem<'callbacks>> {
+        let mut items_guard = self.context.items.lock();
 
         let variable_item = unsafe {
             sys::variable_item_list_add(self.as_raw(), label.as_c_ptr(), 0, None, ptr::null_mut())
         };
 
         let inner = unsafe { NonNull::new_unchecked(variable_item) };
-        let list_index = context.items.len();
-        let item = VariableItem { inner, list_index };
+        let list_index = items_guard.len();
+        let item = VariableItem {
+            inner,
+            list_index,
+            parent: self.inner.0.clone(),
+        };
 
-        context.items.push(VariableItemType::Plain(item));
+        let res = items_guard.push_mut(VariableItemType::Plain(item));
         self.strings.push(label);
 
-        context.callback.0.push((list_index, Box::new(callback)));
+        drop(items_guard);
+
+        self.context
+            .callback
+            .lock()
+            .0
+            .push((list_index, Box::new(callback)));
+
+        VariableItemRef {
+            context: self.context.clone(),
+            list_index,
+        }
     }
 
     /// Push an item to the end of the variable item list. The item will have a number of options
@@ -193,8 +286,8 @@ impl<'callbacks> VariableItemList<'callbacks, UniqueCallbackForEachItem<'callbac
         label: FuriString,
         number_of_options: u8,
         callbacks: C,
-    ) -> () {
-        let mut context = self.context.lock();
+    ) -> VariableItemRef<'callbacks, UniqueCallbackForEachItem<'callbacks>> {
+        let mut items_guard = self.context.items.lock();
 
         unsafe extern "C" fn dispatch_value_changed_callback(raw: *mut sys::VariableItem) {
             let context = unsafe { sys::variable_item_get_context(raw) };
@@ -211,7 +304,7 @@ impl<'callbacks> VariableItemList<'callbacks, UniqueCallbackForEachItem<'callbac
             context.callbacks.react_to_change();
         }
 
-        let list_index = context.items.len();
+        let list_index = items_guard.len();
 
         let mut item_context = Box::new_uninit();
 
@@ -226,18 +319,25 @@ impl<'callbacks> VariableItemList<'callbacks, UniqueCallbackForEachItem<'callbac
         };
 
         let inner = unsafe { NonNull::new_unchecked(variable_item) };
-        let item = VariableItem { inner, list_index };
+        let item = VariableItem {
+            inner,
+            list_index,
+            parent: self.inner.0.clone(),
+        };
 
         item_context.write(VariableItemValueCallbacksContext {
             callbacks: Box::new(callbacks),
             value_label: FuriString::new(),
             item,
+            number_of_options,
         });
 
         {
             let value_callbacks_context = unsafe { &mut item_context.assume_init_mut() };
 
-            let value_label = value_callbacks_context.callbacks.get_new_label(&value_callbacks_context.item, 0);
+            let value_label = value_callbacks_context
+                .callbacks
+                .get_new_label(&value_callbacks_context.item, 0);
             unsafe {
                 sys::variable_item_set_current_value_text(
                     value_callbacks_context.item.inner.as_ptr(),
@@ -247,10 +347,17 @@ impl<'callbacks> VariableItemList<'callbacks, UniqueCallbackForEachItem<'callbac
             value_callbacks_context.value_label = value_label;
         }
 
-        context.items.push(VariableItemType::WithValues(unsafe {
+        let res = items_guard.push_mut(VariableItemType::WithValues(unsafe {
             item_context.assume_init()
         }));
         self.strings.push(label);
+
+        drop(items_guard);
+
+        VariableItemRef {
+            context: self.context.clone(),
+            list_index,
+        }
     }
 
     /// Push an item to the end of the variable item list. The item will have a number of options
@@ -264,8 +371,8 @@ impl<'callbacks> VariableItemList<'callbacks, UniqueCallbackForEachItem<'callbac
         number_of_options: u8,
         on_click_callback: C,
         on_current_value_changed_callbacks: D,
-    ) -> () {
-        let mut context = self.context.lock();
+    ) -> VariableItemRef<'callbacks, UniqueCallbackForEachItem<'callbacks>> {
+        let mut items_guard = self.context.items.lock();
 
         unsafe extern "C" fn dispatch_value_changed_callback(raw: *mut sys::VariableItem) {
             let context = unsafe { sys::variable_item_get_context(raw) };
@@ -282,7 +389,7 @@ impl<'callbacks> VariableItemList<'callbacks, UniqueCallbackForEachItem<'callbac
             context.callbacks.react_to_change();
         }
 
-        let list_index = context.items.len();
+        let list_index = items_guard.len();
 
         let mut item_context = Box::new_uninit();
 
@@ -297,18 +404,25 @@ impl<'callbacks> VariableItemList<'callbacks, UniqueCallbackForEachItem<'callbac
         };
 
         let inner = unsafe { NonNull::new_unchecked(variable_item) };
-        let item = VariableItem { inner, list_index };
+        let item = VariableItem {
+            inner,
+            list_index,
+            parent: self.inner.0.clone(),
+        };
 
         item_context.write(VariableItemValueCallbacksContext {
             callbacks: Box::new(on_current_value_changed_callbacks),
             value_label: FuriString::new(),
             item,
+            number_of_options,
         });
 
         {
             let value_callbacks_context = unsafe { &mut item_context.assume_init_mut() };
 
-            let value_label = value_callbacks_context.callbacks.get_new_label(&value_callbacks_context.item, 0);
+            let value_label = value_callbacks_context
+                .callbacks
+                .get_new_label(&value_callbacks_context.item, 0);
             unsafe {
                 sys::variable_item_set_current_value_text(
                     value_callbacks_context.item.inner.as_ptr(),
@@ -318,15 +432,25 @@ impl<'callbacks> VariableItemList<'callbacks, UniqueCallbackForEachItem<'callbac
             value_callbacks_context.value_label = value_label;
         }
 
-        context.items.push(VariableItemType::WithValues(unsafe {
+        let res = items_guard.push(VariableItemType::WithValues(unsafe {
             item_context.assume_init()
         }));
         self.strings.push(label);
 
-        context
-            .callback
-            .0
-            .push((list_index, Box::new(on_click_callback)));
+        drop(items_guard);
+
+        {
+            self.context
+                .callback
+                .lock()
+                .0
+                .push((list_index, Box::new(on_click_callback)));
+        }
+
+        VariableItemRef {
+            context: self.context.clone(),
+            list_index,
+        }
     }
 
     /// Clear the variable item list.
@@ -334,9 +458,8 @@ impl<'callbacks> VariableItemList<'callbacks, UniqueCallbackForEachItem<'callbac
     /// All items are cleared, and all callbacks associated with those items will be dropped.
     pub fn clear(&mut self) -> () {
         {
-            let mut context = self.context.lock();
-            context.items.clear();
-            context.callback.0.clear();
+            self.context.items.lock().clear();
+            self.context.callback.lock().0.clear();
         }
 
         self.strings.clear();
@@ -360,20 +483,20 @@ impl<'callback, C: Callback + 'callback> VariableItemList<'callback, C> {
         ) -> () {
             let context = unsafe { &mut *(context as *mut CallbackContext<C>) };
 
-            let mut context = context.lock();
-            let item = context.get_item_at_index(index);
-            context.callback.on_click(item)
+            let mut item = context.get_item_at_index(index);
+
+            context.callback.lock().on_click(&mut item)
         }
 
-        let callback_context = CallbackContextInner {
-            callback: on_click_callback,
-            items: Vec::new(),
+        let callback_context = CallbackContext {
+            callback: Mutex::new(on_click_callback),
+            items: Default::default(),
         };
 
         let res = Self {
             inner,
             strings: Vec::new(),
-            context: Arc::new(Mutex::new(callback_context)),
+            context: Arc::new(callback_context),
         };
 
         unsafe {
@@ -391,10 +514,7 @@ impl<'callback, C: Callback + 'callback> VariableItemList<'callback, C> {
     ///
     /// Note that this does not have any effect on the callback, which is left unchanged.
     pub fn clear(&mut self) -> () {
-        {
-            let mut context = self.context.lock();
-            context.items.clear();
-        }
+        self.context.items.lock().clear();
         self.strings.clear();
 
         unsafe { sys::variable_item_list_reset(self.as_raw()) };
@@ -437,11 +557,83 @@ impl<'callback, T> VariableItemList<'callback, T> {
 
 impl<T> Drop for VariableItemList<'_, T> {
     fn drop(&mut self) {
-        let mut context = self.context.lock();
-        context.items.clear();
+        self.context.items.lock().clear();
         self.strings.clear();
 
         unsafe { sys::variable_item_list_free(self.as_raw()) };
+    }
+}
+
+impl VariableItem {
+    // NOTE: this can only be called on objects that do not currently have any options
+    fn add_options<'callbacks, C: OnCurrentValueTextChangedCallbacks + 'callbacks>(
+        self,
+        number_of_options: u8,
+        callbacks: C,
+    ) -> VariableItemValueCallbacksContext<'callbacks> {
+        todo!()
+    }
+}
+
+impl VariableItemValueCallbacksContext<'_> {
+    /// Note that this will not reset the current option, which may be a value greater than the new
+    /// number of options.
+    ///
+    /// Additionally, this will not trigger a redraw, and so if the "<"/">" characters should be
+    /// updated, they will not be.
+    pub fn set_number_of_options(&mut self, number_of_options: u8, redraw: bool) -> () {
+        let view = unsafe { sys::variable_item_list_get_view(self.item.parent.as_ptr()) };
+        let _model = unsafe { sys::view_get_model(view) };
+
+        self.number_of_options = number_of_options;
+
+        let raw = self.item.inner.as_ptr();
+
+        unsafe { sys::view_commit_model(view, redraw) };
+    }
+
+    /// WARNING: The value that is set is not bounds checked, and so may be a value greater than
+    /// the current number of options.
+    ///
+    /// Additionally, this will not trigger a redraw, and so the changes to the label will not be
+    /// reflected in the UI until the next update, and if the "<"/">" characters should be updated,
+    /// they will not be.
+    pub fn set_currently_selected_value(
+        &mut self,
+        value: u8,
+        label_override: Option<FuriString>,
+        redraw: bool,
+    ) -> () {
+        let view = unsafe { sys::variable_item_list_get_view(self.item.parent.as_ptr()) };
+        let _model = unsafe { sys::view_get_model(view) };
+
+        let raw = self.item.inner.as_ptr();
+        unsafe { sys::variable_item_set_current_value_index(raw, value) };
+
+        if let Some(new_label) = label_override {
+            self.value_label = new_label;
+
+            unsafe { sys::variable_item_set_current_value_text(raw, self.value_label.as_c_ptr()) };
+        }
+
+        unsafe { sys::view_commit_model(view, redraw) };
+    }
+
+    /// Temporarily override the value label. Note that this will be reset when the user next
+    /// changes the value, and [OnCurrentValueTextChangedCallbacks::get_new_label] is called.
+    ///
+    /// Additionally, this will not trigger a redraw, and so the updated label will not be
+    /// reflected in the UI until the next update.
+    pub fn override_value_label(&mut self, new_label: FuriString, redraw: bool) -> () {
+        let view = unsafe { sys::variable_item_list_get_view(self.item.parent.as_ptr()) };
+        let _model = unsafe { sys::view_get_model(view) };
+
+        self.value_label = new_label;
+
+        let raw = self.item.inner.as_ptr();
+        unsafe { sys::variable_item_set_current_value_text(raw, self.value_label.as_c_ptr()) };
+
+        unsafe { sys::view_commit_model(view, redraw) };
     }
 }
 
