@@ -198,7 +198,11 @@ impl<'gui, VDC: ViewDispatcherCallbacks> AsRef<ViewDispatcherView<'gui, (), VDC>
 impl<'gui, VDC: ViewDispatcherCallbacks> SubmenuBoundToViewDispatcher<'gui, VDC> {
     /// Adds a new item to the submenu that, when interacted with, will switch the
     /// `ViewDispatcher`'s current `View` to the one provided to this method.
-    pub fn add_nav_item<'label, VC: ViewCallbacks, V: AsRef<ViewDispatcherView<'gui, VC, VDC>>>(
+    pub fn add_nav_item<
+        'label,
+        VC: ViewCallbacks,
+        V: AsRef<ViewDispatcherView<'gui, VC, VDC>> + 'label,
+    >(
         &mut self,
         label: &'label CStr,
         // TODO: allow this to take a view id?
