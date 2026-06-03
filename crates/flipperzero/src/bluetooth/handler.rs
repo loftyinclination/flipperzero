@@ -27,6 +27,11 @@ pub struct EventHandler<'bluetooth, 'profile, PC: BleProfileCallbacks, BEC: BleE
     context: Arc<Context<BEC>>,
 }
 
+unsafe impl<PC: BleProfileCallbacks, BEC: BleEventCallbacks> Send
+    for EventHandler<'_, '_, PC, BEC>
+{
+}
+
 impl<'bluetooth, 'profile, PC: BleProfileCallbacks, BEC: BleEventCallbacks>
     EventHandler<'bluetooth, 'profile, PC, BEC>
 {
