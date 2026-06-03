@@ -16,11 +16,15 @@ const MUTEX_TYPE: sys::FuriMutexType = sys::FuriMutexTypeNormal;
 pub struct FuriMutex(AtomicPtr<sys::FuriMutex>);
 
 impl FuriMutex {
-    const fn new() -> Self {
+    pub const fn new() -> Self {
         Self(AtomicPtr::new(ptr::null_mut()))
     }
 
-    unsafe fn get(&self) -> *mut sys::FuriMutex {
+    pub const fn from_raw(raw: core::ptr::NonNull<sys::FuriMutex>) -> Self {
+        Self(AtomicPtr::new(raw.as_ptr()))
+    }
+
+    pub unsafe fn get(&self) -> *mut sys::FuriMutex {
         let mutex = self.0.load(Ordering::Acquire);
         if !mutex.is_null() {
             mutex
