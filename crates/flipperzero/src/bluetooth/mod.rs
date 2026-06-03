@@ -9,7 +9,9 @@ use ufmt::derive::uDebug;
 
 #[cfg(not(miri))]
 pub mod beacon;
+#[cfg(feature = "alloc")]
 pub mod handler;
+#[cfg(feature = "alloc")]
 pub mod hci;
 pub mod profile;
 #[cfg(not(miri))]
