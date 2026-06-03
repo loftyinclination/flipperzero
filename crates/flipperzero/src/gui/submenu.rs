@@ -216,6 +216,15 @@ impl<'gui, VDC: ViewDispatcherCallbacks> SubmenuBoundToViewDispatcher<'gui, VDC>
             context: *mut c_void,
             _index: u32,
         ) -> () {
+            #[cfg(miri)]
+            {
+                unsafe extern "Rust" {
+                    pub safe fn miri_write_to_stdout(bytes: &[u8]);
+                }
+
+                miri_write_to_stdout(b"Submenu item clicked\n");
+            }
+
             let view = unsafe { &*context.cast::<ViewDispatcherView<'a, VC, VDC>>() };
             view.switch_to_view();
         }

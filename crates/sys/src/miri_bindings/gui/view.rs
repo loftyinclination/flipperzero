@@ -1,6 +1,7 @@
 extern crate alloc;
 
-use crate::{Canvas, InputEvent, miri_bindings::utils::miri_alloc};
+use crate::miri_bindings::utils::*;
+use crate::{Canvas, InputEvent};
 use alloc::boxed::Box;
 use core::{ffi::c_void, ptr::NonNull};
 
@@ -21,8 +22,11 @@ pub struct View {
     pub(super) input_callback: Option<ViewInputCallback>,
     pub(super) previous_callback: Option<ViewNavigationCallback>,
 
+    pub(super) enter_callback: Option<ViewCallback>,
+    pub(super) exit_callback: Option<ViewCallback>,
+
     pub(super) context: Option<NonNull<c_void>>,
-    model: Option<NonNull<c_void>>,
+    model: Option<(NonNull<c_void>, usize)>,
 }
 
 impl View {

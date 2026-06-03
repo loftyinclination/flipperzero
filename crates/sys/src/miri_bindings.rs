@@ -317,15 +317,15 @@ pub struct GPIO_TypeDef {
     pub BRR: u32,
 }
 
-static GUI: lock::SpinLock<OnceCell<Arc<Gui>>> = lock::SpinLock::new(OnceCell::new(), b"GUI");
+static GUI: lock::SpinLock<OnceCell<Arc<Gui>>> = lock::SpinLock::new(OnceCell::new(), Some("GUI"));
 static BLUETOOTH: lock::SpinLock<OnceCell<Arc<Bt>>> =
-    lock::SpinLock::new(OnceCell::new(), b"Bluetooth");
+    lock::SpinLock::new(OnceCell::new(), Some("Bluetooth"));
 
 #[doc = "Open record\n\n # Arguments\n\n* `name` - record name\n\n # Returns\n\npointer to the record\n > **Note:** Thread safe. Open and close must be executed from the same\n thread. Suspends caller thread till record is available"]
 pub unsafe fn furi_record_open(name: *const core::ffi::c_char) -> *mut c_void {
     let name = unsafe { CStr::from_ptr(name) };
     if name == c"gui" {
-        let gui_cell = GUI.lock(b"record acquire");
+        let gui_cell = GUI.lock("record acquire");
         match gui_cell.get() {
             Some(_gui) => {
                 todo!("we currently don't support the same record being opened multiple times")
@@ -355,7 +355,7 @@ pub unsafe fn furi_record_open(name: *const core::ffi::c_char) -> *mut c_void {
             }
         }
     } else if name == c"bt" {
-        let bt_cell = BLUETOOTH.lock(b"record acquire");
+        let bt_cell = BLUETOOTH.lock("record acquire");
 
         match bt_cell.get() {
             Some(_gui) => {
@@ -367,7 +367,6 @@ pub unsafe fn furi_record_open(name: *const core::ffi::c_char) -> *mut c_void {
                 let _ = bt_cell.set(bt.clone());
 
                 Arc::into_raw(bt.clone()).cast_mut().cast()
-
             }
         }
     } else {
@@ -379,7 +378,7 @@ pub unsafe fn furi_record_open(name: *const core::ffi::c_char) -> *mut c_void {
 pub unsafe fn furi_record_close(name: *const core::ffi::c_char) {
     let name = unsafe { CStr::from_ptr(name) };
     if name == c"gui" {
-        let mut gui_cell = GUI.lock(b"record close");
+        let mut gui_cell = GUI.lock("record close");
         /*{
             let gui = gui_cell.get().unwrap();
             assert_eq!(
@@ -402,7 +401,7 @@ pub unsafe fn furi_record_close(name: *const core::ffi::c_char) {
         );*/
 
         let gui_thread_id = {
-            let mut gui = gui.lock(b"record close");
+            let mut gui = gui.lock("record close");
             gui.stop = true;
             gui.thread_id
         };
@@ -419,11 +418,12 @@ pub unsafe fn furi_record_close(name: *const core::ffi::c_char) {
         // which will go out of scope immediate after this when the record is dropped
         unsafe { Arc::decrement_strong_count(Arc::as_ptr(&gui)) };
     } else if name == c"bt" {
-        let mut bt_cell = BLUETOOTH.lock(b"record close");
-        let bt = OnceCell::take(&mut bt_cell).expect("BLUETOOTH must have been opened before being closed");
+        let mut bt_cell = BLUETOOTH.lock("record close");
+        let bt = OnceCell::take(&mut bt_cell)
+            .expect("BLUETOOTH must have been opened before being closed");
 
         let bt_thread_id = {
-            let mut bt = bt.lock(b"record close");
+            let mut bt = bt.lock("record close");
             bt.stop = true;
             bt.thread_id
         };
@@ -497,42 +497,49 @@ pub unsafe fn memmgr_get_minimum_free_heap() -> usize {
 }
 
 pub(super) mod lock {
+    extern crate alloc;
+    use alloc::format;
+
     use crate::miri_bindings::utils::miri_spin_loop;
     // use crate::miri_bindings::utils::miri_write_to_stdout;
     use core::cell::UnsafeCell;
     use core::ops::{Deref, DerefMut};
-    use core::sync::atomic::{AtomicBool, Ordering};
+    use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU8, Ordering};
 
     fn miri_write_to_stdout(bytes: &[u8]) {}
 
     pub struct SpinLock<T> {
         data: UnsafeCell<T>,
         inner: AtomicBool,
-        name: &'static [u8],
+        name: Option<&'static str>,
+        number_of_times_acquired: AtomicU8,
     }
 
     pub struct SpinLockGuard<'a, T> {
         lock: &'a SpinLock<T>,
-        to: &'a [u8],
+        to: &'a str,
+        is_locked: bool,
     }
 
     unsafe impl<T> Sync for SpinLock<T> {}
 
     impl<T> SpinLock<T> {
-        pub const fn new(data: T, name: &'static [u8]) -> Self {
+        pub const fn new(data: T, name: Option<&'static str>) -> Self {
             Self {
                 data: UnsafeCell::new(data),
                 inner: AtomicBool::new(false),
                 name,
+                number_of_times_acquired: AtomicU8::new(0),
             }
         }
 
-        pub fn lock<'a>(&'a self, to: &'a [u8]) -> SpinLockGuard<'a, T> {
-            miri_write_to_stdout(b"\tAttempting to lock ");
-            miri_write_to_stdout(self.name);
-            miri_write_to_stdout(b" for ");
-            miri_write_to_stdout(to);
-            miri_write_to_stdout(b"\n");
+        pub fn lock<'a>(&'a self, to: &'a str) -> SpinLockGuard<'a, T> {
+            if let Some(name) = self.name {
+                miri_write_to_stdout(
+                    format!("\tAttempting to lock {} for {}\n", name, to).as_bytes(),
+                );
+            }
+
             // NOTE: SeqCst has been used all over here, bcs it's definitely correct, and I haven't got
             // a good enough handle on the other orderings to pick one that would also be correct but
             // more efficient.
@@ -544,12 +551,19 @@ pub(super) mod lock {
                 miri_spin_loop();
             }
 
-            miri_write_to_stdout(b"\tAcquired lock around ");
-            miri_write_to_stdout(self.name);
-            miri_write_to_stdout(b" for ");
-            miri_write_to_stdout(to);
-            miri_write_to_stdout(b"\n");
-            SpinLockGuard { lock: self, to }
+            self.number_of_times_acquired.fetch_add(1, Ordering::AcqRel);
+
+            if let Some(name) = self.name {
+                miri_write_to_stdout(
+                    format!("\tAcquired lock around {} for {}\n", name, to).as_bytes(),
+                );
+            }
+
+            SpinLockGuard {
+                lock: self,
+                to,
+                is_locked: true,
+            }
         }
 
         pub unsafe fn deref_unsafe(&self) -> &T {
@@ -557,47 +571,93 @@ pub(super) mod lock {
         }
     }
 
-    impl<'a, T> Deref for SpinLockGuard<'a, T> {
+    impl<T> Deref for SpinLockGuard<'_, T> {
         type Target = T;
 
         fn deref(&self) -> &T {
+            assert!(self.is_locked);
             unsafe { &*self.lock.data.get() }
         }
     }
 
-    impl<'a, T> DerefMut for SpinLockGuard<'a, T> {
+    impl<T> DerefMut for SpinLockGuard<'_, T> {
         fn deref_mut(&mut self) -> &mut T {
+            assert!(self.is_locked);
             unsafe { &mut *self.lock.data.get() }
         }
     }
 
     impl<T> SpinLockGuard<'_, T> {
-        pub(crate) fn unlock(&mut self) {
-            miri_write_to_stdout(b"\tUnlock ");
-            miri_write_to_stdout(self.lock.name);
-            miri_write_to_stdout(b", held by ");
-            miri_write_to_stdout(self.to);
-            miri_write_to_stdout(b"\n");
+        pub(crate) fn unlock(&mut self) -> () {
+            assert!(self.is_locked);
+            self.is_locked = false;
+
+            if let Some(name) = self.lock.name {
+                miri_write_to_stdout(
+                    format!("\tUnlocking lock around {}, held by {}\n", name, self.to).as_bytes(),
+                );
+            }
+
             // NOTE: SeqCst has been used all over here, bcs it's definitely correct, and I haven't got
             // a good enough handle on the other orderings to pick one that would also be correct but
             // more efficient.
             self.lock.inner.store(false, Ordering::SeqCst);
         }
 
-        pub(crate) fn reacquire(&mut self) {
-            while !self
-                .lock
-                .inner
-                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
-                .is_ok()
-            {
+        pub(crate) fn reacquire(&mut self) -> () {
+            assert!(!self.is_locked);
+            let mut lock_sentinel = u8::MAX;
+            let mut iterations = 0;
+
+            loop {
+                let current_sentinel = self.lock.number_of_times_acquired.load(Ordering::Acquire);
+                const ITERATIONS_TO_CONSIDER_DEADLOCK: i32 = 50;
+                if lock_sentinel != current_sentinel || iterations < ITERATIONS_TO_CONSIDER_DEADLOCK
+                {
+                    if let Some(name) = self.lock.name {
+                        miri_write_to_stdout(
+                            if iterations == 0 {
+                                format!(
+                                    "\tAttempting to reacquire lock around {}, for {}\n",
+                                    name, self.to
+                                )
+                            } else {
+                                format!(
+                                    "\tAttemping to reacquire lock around {}, for {}; attempt {}\n",
+                                    name, self.to, iterations
+                                )
+                            }
+                            .as_bytes(),
+                        );
+                    }
+                }
+                lock_sentinel = current_sentinel;
+
+                if self
+                    .lock
+                    .inner
+                    .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                    .is_ok()
+                {
+                    if let Some(name) = self.lock.name {
+                        miri_write_to_stdout(
+                            format!("\tReacquired lock around {} for {}\n", name, self.to)
+                                .as_bytes(),
+                        );
+                    }
+                    self.is_locked = true;
+                    break;
+                }
+
+                iterations += 1;
                 miri_spin_loop();
             }
         }
     }
 
-    impl<'a, T> Drop for SpinLockGuard<'a, T> {
+    impl<T> Drop for SpinLockGuard<'_, T> {
         fn drop(&mut self) {
+            assert!(self.is_locked);
             self.unlock();
         }
     }

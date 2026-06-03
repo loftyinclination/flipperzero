@@ -22,6 +22,16 @@ pub struct InputEvent {
     pub key: InputKey,
     pub type_: InputType,
 }
+
+impl core::fmt::Debug for InputEvent {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("InputEvent")
+            .field("key", &self.key)
+            .field("type_", &self.type_)
+            .finish()
+    }
+}
+
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub union InputEvent__bindgen_ty_1 {
@@ -141,7 +151,8 @@ pub unsafe fn input_get_key_name(key: InputKey) -> *const core::ffi::c_char {
         InputKeyOk => c"Ok",
         InputKeyBack => c"Back",
         _ => c"Err",
-    }.as_ptr()
+    }
+    .as_ptr()
 }
 
 pub unsafe fn input_get_type_name(type_: InputType) -> *const core::ffi::c_char {
@@ -152,5 +163,6 @@ pub unsafe fn input_get_type_name(type_: InputType) -> *const core::ffi::c_char 
         InputTypeLong => c"Long",
         InputTypeRepeat => c"Repeat",
         _ => c"Err",
-    }.as_ptr()
+    }
+    .as_ptr()
 }

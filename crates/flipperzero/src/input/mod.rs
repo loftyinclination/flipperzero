@@ -133,7 +133,7 @@ pub mod miri {
     #[macro_export]
     macro_rules! send {
         ($key:ident event to $gui:ident) => {{
-            let mut gui = $gui.lock(b"send input event");
+            let mut gui = $gui.lock("send input event");
             let input_event = flipperzero::input::InputEvent {
                 sequence: 1.into(),
                 key: flipperzero::input::InputKey::$key,

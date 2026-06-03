@@ -407,9 +407,13 @@ trait CallbackOption {
     fn bind<T: ViewDispatcherCallbacks>(context: &T, raw: *mut SysViewDispatcher) -> bool;
 }
 
+#[cfg(miri)]
 unsafe extern "Rust" {
     pub safe fn miri_write_to_stdout(bytes: &[u8]);
 }
+
+#[cfg(not(miri))]
+fn miri_write_to_stdout(bytes: &[u8]) {}
 
 pub struct Custom;
 impl CallbackOption for Custom {

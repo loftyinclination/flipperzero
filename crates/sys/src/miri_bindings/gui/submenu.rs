@@ -1,5 +1,6 @@
 extern crate alloc;
 
+use crate::miri_bindings::utils::*;
 use crate::miri_bindings::gui::view::{
     View, view_alloc, view_free, view_set_context, view_set_input_callback,
 };
@@ -41,6 +42,8 @@ pub unsafe fn submenu_alloc() -> *mut Submenu {
     ) -> bool {
         let context: &mut Submenu = unsafe { &mut *context.cast() };
         let input_event = unsafe { &*input_event };
+
+        miri_write_to_stdout(b"Submenu view process input event\n");
 
         use crate::miri_bindings::input;
 

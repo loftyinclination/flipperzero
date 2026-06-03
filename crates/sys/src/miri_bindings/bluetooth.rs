@@ -67,7 +67,7 @@ pub mod bt_inner {
                 profile: None,
                 handlers: Vec::new(),
             };
-            let bt = Arc::new(SpinLock::new(bt, b"Bt inner"));
+            let bt = Arc::new(SpinLock::new(bt, Some("Bt inner")));
 
             let thread_id = {
                 let bt_ptr = Arc::into_raw(bt.clone());
@@ -78,7 +78,7 @@ pub mod bt_inner {
             let _ = unsafe { miri_set_thread_name(thread_id, c"bt gap service".as_ptr()) };
 
             {
-                bt.lock(b"spawn").thread_id = thread_id;
+                bt.lock("spawn").thread_id = thread_id;
             }
 
             // the BT stack in the flipper has 3 threads:
@@ -95,7 +95,7 @@ pub mod bt_inner {
                 let bt: Arc<SpinLock<BtInner>> = unsafe { Arc::from_raw(data as *const _) };
 
                 loop {
-                    let mut bt = bt.lock(b"bt loop");
+                    let mut bt = bt.lock("bt loop");
                     miri_write_to_stdout(b"BT loop!\n");
 
                     if bt.hci_event_channel.is_some() {
@@ -223,7 +223,7 @@ pub fn bt_profile_start(
 ) -> *mut FuriHalBleProfileBase {
     let bt = unsafe { &*bt };
 
-    let mut bt = bt.lock(b"start profile");
+    let mut bt = bt.lock("start profile");
     let profile_template = unsafe { &*profile_template };
 
     // via bt->message_queue:
@@ -268,7 +268,7 @@ pub fn bt_profile_start(
 #[doc = "Stop current BLE Profile and restore default profile\n > **Note:** Call of this function leads to 2nd core restart\n\n # Arguments\n\n* `bt` - Bt instance\n\n # Returns\n\ntrue on success"]
 pub fn bt_profile_restore_default(bt: *mut Bt) -> bool {
     let bt = unsafe { &*bt };
-    let mut bt = bt.lock(b"restore profile");
+    let mut bt = bt.lock("restore profile");
 
     bt.config = None;
 
@@ -286,7 +286,7 @@ pub fn bt_profile_restore_default(bt: *mut Bt) -> bool {
 #[doc = "Disconnect from Central\n\n # Arguments\n\n* `bt` - Bt instance"]
 pub fn bt_disconnect(bt: *mut Bt) {
     let bt = unsafe { &*bt };
-    let mut bt = bt.lock(b"disconnect");
+    let mut bt = bt.lock("disconnect");
     // queue closing connection to happen on the bt thread
     // close_rpc_connection
     // stop advertising
@@ -437,10 +437,10 @@ pub unsafe fn ble_event_dispatcher_register_svc_handler(
     extern crate alloc;
     use alloc::boxed::Box;
 
-    let bt_cell = super::BLUETOOTH.lock(b"fetch bt cell for static access to svc handlers");
+    let bt_cell = super::BLUETOOTH.lock("fetch bt cell for static access to svc handlers");
     let mut bt = {
         let bt_arc: &alloc::sync::Arc<Bt> = bt_cell.get().unwrap();
-        let bt = bt_arc.lock(b"register svc handler");
+        let bt = bt_arc.lock("register svc handler");
         bt
     };
     let handler = Box::new(GapEventHandler {
@@ -457,10 +457,10 @@ pub unsafe fn ble_event_dispatcher_unregister_svc_handler(handler: *mut GapSvcEv
     extern crate alloc;
     use alloc::boxed::Box;
 
-    let bt_cell = super::BLUETOOTH.lock(b"fetch bt cell for static access to svc handlers");
+    let bt_cell = super::BLUETOOTH.lock("fetch bt cell for static access to svc handlers");
     let mut bt = {
         let bt_arc: &alloc::sync::Arc<Bt> = bt_cell.get().unwrap();
-        let bt = bt_arc.lock(b"unregister svc handler");
+        let bt = bt_arc.lock("unregister svc handler");
         bt
     };
 
