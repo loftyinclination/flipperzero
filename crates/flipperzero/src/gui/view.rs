@@ -176,7 +176,29 @@ impl<C: ViewCallbacks> View<C> {
 impl<C: ViewCallbacks> Drop for View<C> {
     fn drop(&mut self) {
         if self.should_drop {
+            #[cfg(miri)]
+            {
+                unsafe extern "Rust" {
+                    pub safe fn miri_write_to_stdout(bytes: &[u8]);
+                }
+                miri_write_to_stdout(b"Drop View\n");
+            }
+
+            let raw = self.inner.0.as_ptr();
+            let model = unsafe { sys::view_get_model(raw) }.cast::<*mut C>();
+
+            unsafe {
+                sys::view_free_model(raw);
+            };
             unsafe { ManuallyDrop::drop(&mut self.inner) };
+        } else {
+            #[cfg(miri)]
+            {
+                unsafe extern "Rust" {
+                    pub safe fn miri_write_to_stdout(bytes: &[u8]);
+                }
+                miri_write_to_stdout(b"Not dropping view that is managed by Flipper\n");
+            }
         }
     }
 }

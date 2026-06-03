@@ -166,6 +166,12 @@ impl Submenu {
     }
 }
 
+impl Drop for Submenu {
+    fn drop(&mut self) {
+        unsafe { sys::submenu_free(self.inner.0.as_ptr()) }
+    }
+}
+
 /// A trait that allows for custom handling of [`Ok`](crate::input::InputKey::Ok) events.
 pub trait SubmenuCustomItem {
     fn handle_input_event(&mut self, input_type: InputType) -> ();
