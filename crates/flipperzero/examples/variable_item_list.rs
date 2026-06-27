@@ -18,10 +18,6 @@ use flipperzero::format;
 use flipperzero::gui::variable_item_list::{
     self, UniqueCallbackForEachItem, VariableItemListBoundToViewDispatcher,
 };
-use flipperzero::gui::variable_item_list::{
-    Callback, OnCurrentValueTextChangedCallbacks, VariableItem, VariableItemList,
-};
-use flipperzero::gui::view_dispatcher::{DontBind, ViewDispatcherInner};
 use flipperzero::gui::{
     Gui,
     variable_item_list::{
@@ -33,7 +29,6 @@ use flipperzero::gui::{
         ViewDispatcherType,
     },
 };
-use flipperzero::{format, prelude::FuriString};
 use flipperzero_rt::{entry, manifest};
 
 manifest!(name = "Rust Variable Item List example");
