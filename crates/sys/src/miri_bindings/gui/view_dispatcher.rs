@@ -1,7 +1,7 @@
 extern crate alloc;
 
 use crate::CallbackWithContext;
-use crate::lock::SpinLock;
+use crate::lock::{SpinLock, SpinLockGuard};
 use crate::miri_bindings::gui::canvas::Canvas;
 use crate::miri_bindings::gui::view_port::{ViewPort, view_port_alloc};
 use crate::miri_bindings::gui::{GuiLayerDesktop, gui_add_view_port};
@@ -24,6 +24,12 @@ pub const ViewDispatcherTypeFullscreen: ViewDispatcherType = ViewDispatcherType(
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
 pub struct ViewDispatcherType(pub core::ffi::c_uchar);
 
+#[derive(Debug)]
+enum InputChannel {
+    Pending(Arc<InputEvent>),
+    Processing,
+}
+
 pub struct ViewDispatcherInner {
     view_port: NonNull<ViewPort>,
 
@@ -35,16 +41,22 @@ pub struct ViewDispatcherInner {
     views: BTreeMap<u32, NonNull<super::View>>,
     current_view: Option<u32>,
 
-    input_channel: Option<Arc<InputEvent>>,
+    input_channel: Option<InputChannel>,
     event_channel: Option<u32>,
     stop: bool,
 }
 
 impl ViewDispatcherInner {
-    fn process_input(&mut self) -> () {
-        let Some(mut input_event) = self.input_channel.take() else {
+    fn process_input(this: &mut SpinLockGuard<Self>) -> () {
+        let Some(mut input_event) = this.input_channel.replace(InputChannel::Processing) else {
             unreachable!(
                 "Checked before entering this method that the input_channel was populated, and we're the only thread that can take from it"
+            )
+        };
+
+        let InputChannel::Pending(mut input_event) = input_event else {
+            unreachable!(
+                "Checked before entering this method that the input_channel was populated, and we're the only thread that populate the channel with the Processing state"
             )
         };
 
@@ -52,20 +64,25 @@ impl ViewDispatcherInner {
 
         miri_write_to_stdout(b"View dispatcher process input event\n");
 
-        let Some(ref current_view_id) = self.current_view else {
+        let Some(ref current_view_id) = this.current_view else {
             miri_write_to_stdout(b"View dispatcher attempted to process input event, but there was no current view\n");
             return;
         };
 
-        let current_view = self
+        let current_view = this
             .views
-            .get_mut(current_view_id)
+            .get(current_view_id)
             .expect("The existence was checked on insert");
-        let current_view = unsafe { current_view.as_mut() };
+        let current_view = unsafe { current_view.as_ptr() };
+        let current_view = unsafe { &mut *current_view };
 
+        this.unlock();
         let is_consumed = current_view.process_input(input_event);
+        this.reacquire();
 
         if is_consumed {
+            core::assert_matches!(this.input_channel.take(), Some(InputChannel::Processing));
+
             return;
         }
 
@@ -73,6 +90,7 @@ impl ViewDispatcherInner {
 
         if input_event.key != InputKeyBack {
             miri_write_to_stdout(b"Input event was not a back event, no further processing\n");
+            core::assert_matches!(this.input_channel.take(), Some(InputChannel::Processing));
             return;
         }
 
@@ -80,6 +98,7 @@ impl ViewDispatcherInner {
 
         if !(input_event.type_ == InputTypeShort || input_event.type_ == InputTypeLong) {
             miri_write_to_stdout(b"but was not the right type\n");
+            core::assert_matches!(this.input_channel.take(), Some(InputChannel::Processing));
             return;
         }
 
@@ -90,7 +109,7 @@ impl ViewDispatcherInner {
             super::view::IGNORE => {
                 miri_write_to_stdout(b"The current view did not declare a view to switch to, checking dispatcher's navigation event callback\n");
 
-                let Some(navigation_event_callback) = self.navigation_event_callback else {
+                let Some(navigation_event_callback) = this.navigation_event_callback else {
                     miri_write_to_stdout(b"Dispatcher does not have a navigation event callback\n");
                     return;
                 };
@@ -98,11 +117,11 @@ impl ViewDispatcherInner {
                 let navigation_event_callback = navigation_event_callback.expect(
                     "ViewDispatcherNavigationEventCallback is only nullable for FFI reasons",
                 );
-                let should_stop = unsafe { navigation_event_callback(self.context) };
+                let should_stop = unsafe { navigation_event_callback(this.context) };
 
                 if should_stop {
                     miri_write_to_stdout(b"Dispatcher wants to stop running\n");
-                    self.stop = true;
+                    this.stop = true;
                 } else {
                     miri_write_to_stdout(b"Dispatcher did not react to back event\n");
                 }
@@ -112,9 +131,11 @@ impl ViewDispatcherInner {
                 miri_write_to_stdout(&[char::from_digit(view_to_switch_to, 10).unwrap() as u8]);
                 miri_write_to_stdout(b"\"\n");
 
-                self.switch_to_view(view_to_switch_to);
+                this.switch_to_view(view_to_switch_to);
             }
         }
+
+        core::assert_matches!(this.input_channel.take(), Some(InputChannel::Processing));
     }
 
     fn switch_to_view(&mut self, view_id: u32) -> () {
@@ -141,7 +162,7 @@ impl ViewDispatcher {
             let mut view_dispatcher_guard = inner.lock("view dispatcher event loop");
 
             if view_dispatcher_guard.input_channel.is_some() {
-                view_dispatcher_guard.process_input();
+                ViewDispatcherInner::process_input(&mut view_dispatcher_guard);
             }
 
             if view_dispatcher_guard.event_channel.is_some() {
@@ -237,10 +258,18 @@ pub unsafe fn view_dispatcher_alloc() -> *mut ViewDispatcher {
             {
                 let mut view_dispatcher_guard = view_dispatcher.lock("dispatch input");
 
-                let old_input_event = view_dispatcher_guard.input_channel.replace(input_event);
+                let old_input_event = view_dispatcher_guard
+                    .input_channel
+                    .replace(InputChannel::Pending(input_event));
                 debug_assert!(old_input_event.is_none());
             }
 
+            // NOTE: we block here until the input channel has been taken, because otherwise,
+            // execution will return to the caller (the GUI inner's `process_input`) too soon, (which
+            // would in turn release the lock on the GUI inner's `send_input_event` method) which
+            // might lead to another input event being sent while this one is processed, which
+            // could fail the debug_assert above.
+            //
             // OPTIMISATION: we unlock the dispatcher here to allow the service thread to `take`
             // the input event we just inserted. there's no point doing that if we're not going to
             // yield here to allow that other thread to run.
