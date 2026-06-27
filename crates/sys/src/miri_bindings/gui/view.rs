@@ -26,7 +26,14 @@ pub struct View {
     pub(super) exit_callback: Option<ViewCallback>,
 
     pub(super) context: Option<NonNull<c_void>>,
-    model: Option<(NonNull<c_void>, usize)>,
+    model: Option<ViewModel>,
+}
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+struct ViewModel {
+    raw: NonNull<u8>,
+    size: usize,
 }
 
 impl View {
@@ -100,6 +107,8 @@ pub unsafe fn view_alloc() -> *mut crate::View {
         draw_callback: None,
         input_callback: None,
         previous_callback: None,
+        enter_callback: None,
+        exit_callback: None,
         context: None,
         model: None,
     };
@@ -131,11 +140,13 @@ pub unsafe fn view_set_previous_callback(view: *mut crate::View, callback: ViewN
 }
 #[doc = "Set Enter callback\n\n # Arguments\n\n* `view` - View instance\n * `callback` - callback"]
 pub unsafe fn view_set_enter_callback(view: *mut crate::View, callback: ViewCallback) {
-    todo!()
+    let view = unsafe { &mut *view };
+    view.enter_callback = Some(callback);
 }
 #[doc = "Set Exit callback\n\n # Arguments\n\n* `view` - View instance\n * `callback` - callback"]
 pub unsafe fn view_set_exit_callback(view: *mut crate::View, callback: ViewCallback) {
-    todo!()
+    let view = unsafe { &mut *view };
+    view.exit_callback = Some(callback);
 }
 #[doc = "Set Update callback\n\n # Arguments\n\n* `view` - View instance\n * `callback` - callback"]
 pub unsafe fn view_set_update_callback(view: *mut crate::View, callback: ViewUpdateCallback) {
@@ -160,21 +171,27 @@ pub unsafe fn view_set_orientation(view: *mut crate::View, orientation: ViewOrie
 pub unsafe fn view_allocate_model(view: *mut View, type_: ViewModelType, size: usize) {
     assert!(type_ == ViewModelTypeLockFree);
 
-    let model = unsafe { miri_alloc(size, 4) };
-    let model = unsafe { NonNull::new_unchecked(model as *mut c_void) };
+    let raw = unsafe { miri_alloc(size, 4) };
+    let raw = unsafe { NonNull::new_unchecked(raw) };
 
     let view = unsafe { &mut *view };
-    view.model = Some(model);
+    view.model = Some(ViewModel { raw, size });
 }
 #[doc = "Free view model data memory.\n\n # Arguments\n\n* `view` - View instance"]
 pub unsafe fn view_free_model(view: *mut View) {
-    todo!()
+    let view = unsafe { &mut *view };
+    let ViewModel { raw, size } = view
+        .model
+        .take()
+        .expect("Must have allocated a model to free it");
+    let raw = raw.as_ptr();
+    unsafe { miri_dealloc(raw, size, 4) };
 }
 #[doc = "Get view model data\n\n # Arguments\n\n* `view` - View instance\n\n # Returns\n\npointer to model data\n Don't forget to commit model changes"]
 pub unsafe fn view_get_model(view: *mut View) -> *mut c_void {
     let view = unsafe { &mut *view };
     match view.model {
-        Some(model) => model.as_ptr(),
+        Some(model) => model.raw.as_ptr().cast(),
         None => core::ptr::null_mut(),
     }
 }
