@@ -1,7 +1,7 @@
 //! Safe wrapper for dealing with allocations and freeing for the variable item list
 
 use crate::furi::string::FuriString;
-use crate::furi::sync::Mutex;
+use crate::furi::sync::{FuriMutex, Mutex};
 use crate::gui::view::View;
 use crate::gui::view_dispatcher::{ViewDispatcher, ViewDispatcherCallbacks, ViewDispatcherView};
 use alloc::rc::Rc;
@@ -16,6 +16,7 @@ use core::{
     ptr::{self, NonNull},
 };
 use flipperzero_sys as sys;
+use lock_api::MappedMutexGuard;
 
 pub struct VariableItemList<'a, T> {
     inner: VariableItemListInner,
@@ -109,13 +110,13 @@ pub enum VariableItemType<'a> {
     WithValues(Box<VariableItemValueCallbacksContext<'a>>),
 }
 
-pub struct UniqueCallbackForEachItem<'a>(Vec<(usize, Box<dyn Callback + 'a>)>);
+pub struct UniqueCallbackForEachItem<'a>(Vec<(usize, Box<dyn Callback<'a> + 'a>)>);
 
 impl<'a> CallbackContext<'a, UniqueCallbackForEachItem<'a>> {
     fn try_get_callback_for_item_at_index(
         &self,
         index: u32,
-    ) -> Option<lock_api::MappedMutexGuard<'_, crate::furi::sync::FuriMutex, Box<dyn Callback + 'a>>>
+    ) -> Option<lock_api::MappedMutexGuard<'_, crate::furi::sync::FuriMutex, Box<dyn Callback<'a> + 'a>>>
     {
         lock_api::MutexGuard::try_map(self.callback.lock(), |context| {
             context
@@ -142,9 +143,11 @@ impl Debug for VariableItemValueCallbacksContext<'_> {
     }
 }
 
-pub trait Callback: Send {
+pub type MutexGuardedVariableItemType<'guard, 'callbacks> = MappedMutexGuard<'guard, FuriMutex, VariableItemType<'callbacks>>;
+
+pub trait Callback<'callbacks>: Send {
     /// Called on a (short) Ok input event.
-    fn on_click(&self, item: &mut VariableItemType<'_>) -> ();
+    fn on_click<'guard>(&'guard self, item: MutexGuardedVariableItemType<'guard, 'callbacks>) -> ();
 }
 
 pub trait OnCurrentValueTextChangedCallbacks: Send {
@@ -230,7 +233,7 @@ impl<'callbacks> VariableItemList<'callbacks, UniqueCallbackForEachItem<'callbac
             parent: self.inner.0.clone(),
         };
 
-        let res = items_guard.push_mut(VariableItemType::Plain(item));
+        items_guard.push(VariableItemType::Plain(item));
         self.strings.push(label);
 
         drop(items_guard);
@@ -243,7 +246,7 @@ impl<'callbacks> VariableItemList<'callbacks, UniqueCallbackForEachItem<'callbac
 
     /// Push an item to the end of the variable item list that, when clicked on, invokes a
     /// callback.
-    pub fn push_item_with_on_click_callback<C: Callback + 'callbacks>(
+    pub fn push_item_with_on_click_callback<C: Callback<'callbacks> + 'callbacks>(
         &mut self,
         label: FuriString,
         callback: C,
@@ -262,7 +265,7 @@ impl<'callbacks> VariableItemList<'callbacks, UniqueCallbackForEachItem<'callbac
             parent: self.inner.0.clone(),
         };
 
-        let res = items_guard.push_mut(VariableItemType::Plain(item));
+        items_guard.push(VariableItemType::Plain(item));
         self.strings.push(label);
 
         drop(items_guard);
@@ -347,7 +350,7 @@ impl<'callbacks> VariableItemList<'callbacks, UniqueCallbackForEachItem<'callbac
             value_callbacks_context.value_label = value_label;
         }
 
-        let res = items_guard.push_mut(VariableItemType::WithValues(unsafe {
+        items_guard.push(VariableItemType::WithValues(unsafe {
             item_context.assume_init()
         }));
         self.strings.push(label);
@@ -363,7 +366,7 @@ impl<'callbacks> VariableItemList<'callbacks, UniqueCallbackForEachItem<'callbac
     /// Push an item to the end of the variable item list. The item will have a number of options
     /// which can be selected, and, when clicked, will invoke a callback.
     pub fn push_item_with_on_click_callback_and_options<
-        C: Callback + 'callbacks,
+        C: Callback<'callbacks> + 'callbacks,
         D: OnCurrentValueTextChangedCallbacks + 'callbacks,
     >(
         &mut self,
@@ -432,7 +435,7 @@ impl<'callbacks> VariableItemList<'callbacks, UniqueCallbackForEachItem<'callbac
             value_callbacks_context.value_label = value_label;
         }
 
-        let res = items_guard.push(VariableItemType::WithValues(unsafe {
+        items_guard.push(VariableItemType::WithValues(unsafe {
             item_context.assume_init()
         }));
         self.strings.push(label);
@@ -468,7 +471,7 @@ impl<'callbacks> VariableItemList<'callbacks, UniqueCallbackForEachItem<'callbac
     }
 }
 
-impl<'callback, C: Callback + 'callback> VariableItemList<'callback, C> {
+impl<'callback, C: Callback<'callback> + 'callback> VariableItemList<'callback, C> {
     /// Creates a new variable item list with a single callback that is invoked whenever any item
     /// is clicked.
     pub fn new_with_callback(mut on_click_callback: C) -> Self {
@@ -477,7 +480,7 @@ impl<'callback, C: Callback + 'callback> VariableItemList<'callback, C> {
             VariableItemListInner(unsafe { NonNull::new_unchecked(variable_item_list) })
         };
 
-        unsafe extern "C" fn dispatch_callback<C: Callback>(
+        unsafe extern "C" fn dispatch_callback<'callback, C: Callback<'callback> + 'callback>(
             context: *mut c_void,
             index: u32,
         ) -> () {
@@ -502,7 +505,7 @@ impl<'callback, C: Callback + 'callback> VariableItemList<'callback, C> {
         unsafe {
             sys::variable_item_list_set_enter_callback(
                 res.inner.as_ptr(),
-                Some(dispatch_callback::<C>),
+                Some(dispatch_callback::<'callback, C>),
                 Arc::as_ptr(&res.context).cast_mut().cast(),
             );
         };
@@ -561,17 +564,6 @@ impl<T> Drop for VariableItemList<'_, T> {
         self.strings.clear();
 
         unsafe { sys::variable_item_list_free(self.as_raw()) };
-    }
-}
-
-impl VariableItem {
-    // NOTE: this can only be called on objects that do not currently have any options
-    fn add_options<'callbacks, C: OnCurrentValueTextChangedCallbacks + 'callbacks>(
-        self,
-        number_of_options: u8,
-        callbacks: C,
-    ) -> VariableItemValueCallbacksContext<'callbacks> {
-        todo!()
     }
 }
 

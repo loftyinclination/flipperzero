@@ -13,6 +13,7 @@ use alloc::boxed::Box;
 use alloc::sync::Arc;
 use core::ffi::CStr;
 use core::sync::atomic::{AtomicI8, Ordering};
+use flipperzero::format;
 #[cfg(miri)]
 use flipperzero::gui::variable_item_list::{
     self, UniqueCallbackForEachItem, VariableItemListBoundToViewDispatcher,
@@ -23,8 +24,13 @@ use flipperzero::gui::variable_item_list::{
 use flipperzero::gui::view_dispatcher::{DontBind, ViewDispatcherInner};
 use flipperzero::gui::{
     Gui,
+    variable_item_list::{
+        Callback, MutexGuardedVariableItemType, OnCurrentValueTextChangedCallbacks, VariableItem,
+        VariableItemList,
+    },
     view_dispatcher::{
-        StopDispatcher, ViewDispatcher, ViewDispatcherCallbacks, ViewDispatcherType,
+        DontBind, StopDispatcher, ViewDispatcher, ViewDispatcherCallbacks, ViewDispatcherInner,
+        ViewDispatcherType,
     },
 };
 use flipperzero::{format, prelude::FuriString};
@@ -63,8 +69,8 @@ struct IncrementGlobalCounterCallback<'a> {
     increment_by: i8,
 }
 
-impl Callback for IncrementGlobalCounterCallback<'_> {
-    fn on_click(&self, _item: &VariableItem) -> () {
+impl Callback<'_> for IncrementGlobalCounterCallback<'_> {
+    fn on_click(&self, _item: MutexGuardedVariableItemType<'_, '_>) -> () {
         {
             let msg = alloc::format!("Incrementing by: {}\n", self.increment_by);
             miri_write_to_stdout(msg.as_bytes());
@@ -85,8 +91,8 @@ struct ChangeIncrementAmountCallback<'a> {
     increment_amount: &'a AtomicI8,
 }
 
-impl Callback for IncrementGlobalCounterByVariableCallback<'_> {
-    fn on_click(&self, _item: &VariableItem) -> () {
+impl Callback<'_> for IncrementGlobalCounterByVariableCallback<'_> {
+    fn on_click(&self, _item: MutexGuardedVariableItemType<'_, '_>) -> () {
         let val = self.increment_by.load(Ordering::SeqCst);
 
         {
