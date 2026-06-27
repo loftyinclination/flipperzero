@@ -230,6 +230,8 @@ impl<'gui, VDC: ViewDispatcherCallbacks> SubmenuBoundToViewDispatcher<'gui, VDC>
         }
 
         let context = ptr::from_ref(view).cast_mut();
+        crate::debug!("adding item at index {}", index);
+        crate::debug!("adding item with context at {}", context.addr().clone());
 
         unsafe {
             sys::submenu_add_item(

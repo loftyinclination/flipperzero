@@ -330,7 +330,7 @@ impl<'a, VC: ViewCallbacks, VDC: ViewDispatcherCallbacks> ViewDispatcherView<'a,
     pub fn switch_to_view(&self) {
         let raw = self.view_dispatcher.as_raw();
 
-        miri_write_to_stdout(b"View dispatcher switch to view\n");
+        crate::debug!("View dispatcher switch to view {}", self.id);
         unsafe { sys::view_dispatcher_switch_to_view(raw, self.id) };
     }
 
