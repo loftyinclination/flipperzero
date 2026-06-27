@@ -79,7 +79,7 @@ impl<'a, C: BleProfileCallbacks + 'static> Profile<'a, C> {
             // because the latter is more complicated for the consumer to operate on (it requires
             // knowledge of the leading COMPLETE_LOCAL_NAME byte).
             let device_name = context.callbacks.configure_name(device_name());
-            config.adv_name[0] = bt_hci::uuid::ad_types::COMPLETE_LOCAL_NAME.into();
+            config.adv_name[0] = bt_hci::uuid::ad_types::COMPLETE_LOCAL_NAME;
             config.adv_name[1..].copy_from_slice(&device_name);
 
             let appearance = context.callbacks.configure_appearance();

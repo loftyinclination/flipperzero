@@ -1,10 +1,11 @@
 use alloc::boxed::Box;
 use alloc::sync::Arc;
 
+use crate::bluetooth::hci::HciError;
 use crate::bluetooth::profile::{BleProfileCallbacks, Profile};
 use crate::furi::sync::Mutex;
 use crate::furi::time::FuriDuration;
-use crate::{error, warn};
+use crate::{debug, error, warn};
 use bt_hci::FromHciBytes;
 use bt_hci::event::le::LeEvent;
 use bt_hci::event::EventPacket;
@@ -29,7 +30,7 @@ unsafe impl<PC: BleProfileCallbacks, BEC: BleEventCallbacks> Send
 impl<'bluetooth, 'profile, PC: BleProfileCallbacks, BEC: BleEventCallbacks>
     EventHandler<'bluetooth, 'profile, PC, BEC>
 {
-    pub fn subscribe(profile: &'profile Profile<'bluetooth, PC>, mut callbacks: BEC) -> Self {
+    pub fn subscribe(profile: &'profile Profile<'bluetooth, PC>, callbacks: BEC) -> Self {
         unsafe extern "C" fn dispatch_ble_event<C: BleEventCallbacks>(
             event: *mut c_void,
             context: *mut c_void,
@@ -89,7 +90,7 @@ impl<'bluetooth, 'profile, PC: BleProfileCallbacks, BEC: BleEventCallbacks>
             }
         }
 
-        let mut context = Arc::new(Context {
+        let context = Arc::new(Context {
             callbacks,
         });
 

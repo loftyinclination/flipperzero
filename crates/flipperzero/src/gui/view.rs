@@ -185,11 +185,8 @@ impl<C: ViewCallbacks> Drop for View<C> {
             }
 
             let raw = self.inner.0.as_ptr();
-            let model = unsafe { sys::view_get_model(raw) }.cast::<*mut C>();
 
-            unsafe {
-                sys::view_free_model(raw);
-            };
+            unsafe { sys::view_free_model(raw) };
             unsafe { ManuallyDrop::drop(&mut self.inner) };
         } else {
             #[cfg(miri)]

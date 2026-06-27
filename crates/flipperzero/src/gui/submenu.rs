@@ -151,10 +151,10 @@ impl Submenu {
     /// and so any back events that occur while this view is current will not be consumed, and will
     /// hand control to [`ViewDispatcherCallbacks::on_navigation`].
     #[cfg(feature = "alloc")]
-    pub fn bind_to_view_dispatcher<'a, 'gui, C: ViewDispatcherCallbacks>(
+    pub fn bind_to_view_dispatcher<'gui, C: ViewDispatcherCallbacks>(
         self,
         id: u32,
-        view_dispatcher: &'a mut ViewDispatcher<'gui, C>,
+        view_dispatcher: &mut ViewDispatcher<'gui, C>,
     ) -> SubmenuBoundToViewDispatcher<'gui, C> {
         let raw = unsafe { sys::submenu_get_view(self.as_raw()) };
         let view = unsafe { View::new_from_raw(raw) };

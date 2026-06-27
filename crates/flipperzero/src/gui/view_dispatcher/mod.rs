@@ -221,7 +221,7 @@ impl<'a, 'b, C: ViewDispatcherCallbacks> Drop for CallbacksRef<'a, 'b, C> {
 }
 
 impl<'a, C: ViewDispatcherCallbacks> ViewDispatcherRef<'a, C> {
-    pub fn get_context<'b>(&'b self) -> impl Deref<Target = C> {
+    pub fn get_context(&self) -> impl Deref<Target = C> {
         let dispatcher = self.inner.upgrade().unwrap();
         CallbacksRef {
             dispatcher,
@@ -231,7 +231,7 @@ impl<'a, C: ViewDispatcherCallbacks> ViewDispatcherRef<'a, C> {
 
     pub fn switch_to_view(&self, id: u32) -> () {
         let view_dispatcher = self.inner.upgrade().unwrap();
-        let raw = (&*view_dispatcher).as_raw();
+        let raw = view_dispatcher.as_raw();
 
         miri_write_to_stdout(b"View dispatcher switch to view\n");
         unsafe { sys::view_dispatcher_switch_to_view(raw, id) };
@@ -308,7 +308,9 @@ impl<'a, C: ViewDispatcherCallbacks> ViewDispatcherInner<'a, C> {
 }
 
 #[cfg(feature = "alloc")]
-impl<'a, VC: ViewCallbacks, VDC: ViewDispatcherCallbacks> AsRef<ViewDispatcherView<'a, VC, VDC>> for ViewDispatcherView<'a, VC, VDC> {
+impl<'a, VC: ViewCallbacks, VDC: ViewDispatcherCallbacks> AsRef<ViewDispatcherView<'a, VC, VDC>>
+    for ViewDispatcherView<'a, VC, VDC>
+{
     fn as_ref(&self) -> &ViewDispatcherView<'a, VC, VDC> {
         self
     }
@@ -326,7 +328,7 @@ pub struct ViewDispatcherView<'a, VC: ViewCallbacks, VDC: ViewDispatcherCallback
 #[cfg(feature = "alloc")]
 impl<'a, VC: ViewCallbacks, VDC: ViewDispatcherCallbacks> ViewDispatcherView<'a, VC, VDC> {
     pub fn switch_to_view(&self) {
-        let raw = (&*self.view_dispatcher).as_raw();
+        let raw = self.view_dispatcher.as_raw();
 
         miri_write_to_stdout(b"View dispatcher switch to view\n");
         unsafe { sys::view_dispatcher_switch_to_view(raw, self.id) };
@@ -413,7 +415,7 @@ unsafe extern "Rust" {
 }
 
 #[cfg(not(miri))]
-fn miri_write_to_stdout(bytes: &[u8]) {}
+fn miri_write_to_stdout(_bytes: &[u8]) {}
 
 pub struct Custom;
 impl CallbackOption for Custom {
@@ -481,15 +483,15 @@ pub struct Tick;
 impl CallbackOption for Tick {
     fn bind<C: ViewDispatcherCallbacks>(context: &C, raw: *mut SysViewDispatcher) -> bool {
         miri_write_to_stdout(b"registering tick event handler\n");
-        pub unsafe extern "C" fn dispatch_tick<C: ViewDispatcherCallbacks>(context: *mut c_void) {
+        pub unsafe extern "C" fn dispatch_tick<C: ViewDispatcherCallbacks>(
+            context: *mut c_void,
+        ) -> () {
             let context: Arc<ViewDispatcherInner<C>> = unsafe { Arc::from_raw(context as *mut _) };
             // SAFETY: `context` is stored in a `Box` which is a member of `ViewDispatcher`
             // and the callback is accessed exclusively by this function
-            let result = context.callbacks.on_tick(&context);
+            context.callbacks.on_tick(&context);
 
             let _ = Arc::into_raw(context);
-
-            result
         }
 
         let tick_period = context.tick_period().get();
