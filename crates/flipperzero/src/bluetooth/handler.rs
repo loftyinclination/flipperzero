@@ -2,23 +2,17 @@ use alloc::boxed::Box;
 use alloc::sync::Arc;
 
 use crate::bluetooth::profile::{BleProfileCallbacks, Profile};
-use crate::furi::event_flag::EventFlag;
 use crate::furi::sync::Mutex;
 use crate::furi::time::FuriDuration;
 use crate::{error, warn};
 use bt_hci::FromHciBytes;
 use bt_hci::event::le::LeEvent;
-use bt_hci::event::{EventPacket, EventParams};
-use core::marker::PhantomData;
+use bt_hci::event::EventPacket;
 use core::{ffi::c_void, ptr::NonNull};
 use flipperzero_sys as sys;
 
-const FLAGS: u32 = 1;
-
 struct Context<BEC: BleEventCallbacks> {
     callbacks: BEC,
-    event_flag: EventFlag,
-    pattern_override: Mutex<Option<Box<dyn ResponsePattern>>>,
 }
 
 pub struct EventHandler<'bluetooth, 'profile, PC: BleProfileCallbacks, BEC: BleEventCallbacks> {
@@ -67,14 +61,11 @@ impl<'bluetooth, 'profile, PC: BleProfileCallbacks, BEC: BleEventCallbacks>
 
             match EventPacket::from_hci_bytes_complete(event) {
                 Ok(event_packet) => {
-                    {
-                        let pattern_guard: &mut Option<_> = &mut *context.pattern_override.lock();
-                        if let Some(pattern) = pattern_guard {
-                            todo!("pattern guard")
-                        }
-                    }
+                    debug!("sending BLE event to handler");
 
                     let event_handled = callbacks.handle_event(event_packet);
+
+                    debug!("handler finished processing BLE event; {:?}", event_handled);
 
                     match event_handled {
                         // NOTE: we don't send out BleEventAckFlowDisable commands because that just
@@ -87,10 +78,10 @@ impl<'bluetooth, 'profile, PC: BleProfileCallbacks, BEC: BleEventCallbacks>
                 Err(error) => {
                     match error {
                         bt_hci::FromHciBytesError::InvalidSize => {
-                            error!("failed to parse event packet: insufficient data");
+                            error!("failed to parse ble event packet: insufficient data");
                         }
                         bt_hci::FromHciBytesError::InvalidValue => {
-                            error!("failed to parse event packet: value was out of range");
+                            error!("failed to parse ble event packet: value was out of range");
                         }
                     };
                     sys::BleEventNotAck
@@ -100,8 +91,6 @@ impl<'bluetooth, 'profile, PC: BleProfileCallbacks, BEC: BleEventCallbacks>
 
         let mut context = Arc::new(Context {
             callbacks,
-            event_flag: Default::default(),
-            pattern_override: Mutex::new(None),
         });
 
         let handler = unsafe {
@@ -119,45 +108,6 @@ impl<'bluetooth, 'profile, PC: BleProfileCallbacks, BEC: BleEventCallbacks>
             context,
         }
     }
-
-    pub(crate) fn wait_and_consume_response(&mut self, response: impl ResponsePattern + 'static) {
-        {
-            let pattern_guard: &mut Option<_> = &mut *self.context.pattern_override.lock();
-            let old_pattern = pattern_guard.replace(Box::new(response));
-            assert!(old_pattern.is_none());
-        }
-
-        match self
-            .context
-            .event_flag
-            .wait_any_flags(FLAGS, true, FuriDuration::WAIT_FOREVER)
-        {
-            Ok(_) => (),
-            Err(status) => warn!("Errored out when waiting for BLE event: {}", status),
-        }
-    }
-}
-
-pub(crate) struct PatternMatcher<T> {
-    phantom: PhantomData<T>,
-}
-
-impl<T> PatternMatcher<T> {
-    pub fn new() -> Self {
-        Self {
-            phantom: PhantomData,
-        }
-    }
-}
-
-impl<'a, T: EventParams<'a>> ResponsePattern for PatternMatcher<T> {
-    fn is_of_type(&self, event: &EventPacket<'_>) -> bool {
-        todo!()
-    }
-}
-
-trait ResponsePattern {
-    fn is_of_type(&self, event: &EventPacket<'_>) -> bool;
 }
 
 impl<'bluetooth, 'profile, PC: BleProfileCallbacks, BEC: BleEventCallbacks> Drop
@@ -168,7 +118,7 @@ impl<'bluetooth, 'profile, PC: BleProfileCallbacks, BEC: BleEventCallbacks> Drop
     }
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(ufmt::derive::uDebug, Clone, PartialEq, Eq)]
 pub enum EventBubbling {
     Consumed,
     ReturnForAdditionalProcessing,
@@ -178,5 +128,6 @@ pub trait BleEventCallbacks: Send {
     /// Callback to invoke when a BLE event is received.
     ///
     /// Note: this will be invoked on the BLE GAP service thread.
+    // TODO: should this take a bt_hci::event::Event enum instead of a packet?
     fn handle_event<'a, 'b>(&'a mut self, event_packet: EventPacket<'b>) -> EventBubbling;
 }
