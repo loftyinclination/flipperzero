@@ -84,18 +84,19 @@ pub struct VariableItemRef<'a, T> {
 }
 
 impl<'a, T> VariableItemRef<'a, T> {
+    /// Locks the item list, and returns a mutable reference to the reference's associated
+    /// item-type.
     pub fn get_mut(
         &self,
     ) -> lock_api::MappedMutexGuard<'_, crate::furi::sync::FuriMutex, VariableItemType<'a>> {
-        let Ok(res) = lock_api::MutexGuard::try_map(self.context.items.lock(), |context| {
+        lock_api::MutexGuard::try_map(self.context.items.lock(), |context| {
             context.get_mut(self.list_index)
-        }) else {
-            unreachable!(
-                "List index was gotten from inserting, so there should always be an item at the index"
-            )
-        };
+        })
+        .expect(
+            "List index was gotten from inserting, so there should always be an item at the index",
+        )
+    }
 
-        res
     }
 }
 
@@ -113,14 +114,16 @@ impl<'a> CallbackContext<'a, UniqueCallbackForEachItem<'a>> {
     fn try_get_callback_for_item_at_index(
         &self,
         index: u32,
-    ) -> Option<lock_api::MappedMutexGuard<'_, crate::furi::sync::FuriMutex, Box<dyn Callback<'a> + 'a>>>
-    {
+    ) -> Option<
+        lock_api::MappedMutexGuard<'_, crate::furi::sync::FuriMutex, Box<dyn Callback<'a> + 'a>>,
+    > {
         lock_api::MutexGuard::try_map(self.callback.lock(), |context| {
             context
                 .0
                 .iter_mut()
                 .find_map(|(item_id, callback)| (*item_id == index as usize).then_some(callback))
-        }).ok()
+        })
+        .ok()
     }
 }
 
@@ -140,11 +143,13 @@ impl Debug for VariableItemValueCallbacksContext<'_> {
     }
 }
 
-pub type MutexGuardedVariableItemType<'guard, 'callbacks> = MappedMutexGuard<'guard, FuriMutex, VariableItemType<'callbacks>>;
+pub type MutexGuardedVariableItemType<'guard, 'callbacks> =
+    MappedMutexGuard<'guard, FuriMutex, VariableItemType<'callbacks>>;
 
 pub trait Callback<'callbacks>: Send {
     /// Called on a (short) Ok input event.
-    fn on_click<'guard>(&'guard self, item: MutexGuardedVariableItemType<'guard, 'callbacks>) -> ();
+    fn on_click<'guard>(&'guard self, item: MutexGuardedVariableItemType<'guard, 'callbacks>)
+    -> ();
 }
 
 pub trait OnCurrentValueTextChangedCallbacks: Send {
@@ -176,8 +181,7 @@ impl<'callbacks> VariableItemList<'callbacks, UniqueCallbackForEachItem<'callbac
             let context: Arc<CallbackContext<UniqueCallbackForEachItem>> =
                 unsafe { Arc::from_raw(context.cast()) };
 
-            let Some(callback_for_item) = context.try_get_callback_for_item_at_index(index)
-            else {
+            let Some(callback_for_item) = context.try_get_callback_for_item_at_index(index) else {
                 return;
             };
 
@@ -570,7 +574,8 @@ impl VariableItemValueCallbacksContext<'_> {
     /// updated, they will not be.
     pub fn set_number_of_options(&mut self, number_of_options: u8, redraw: bool) -> () {
         let view = unsafe { sys::variable_item_list_get_view(self.item.parent.as_ptr()) };
-        let _model = unsafe { sys::view_get_model(view) };
+        // NOTE: this function is necessary to lock the model
+        let _ = unsafe { sys::view_get_model(view) };
 
         self.number_of_options = number_of_options;
 
@@ -590,7 +595,8 @@ impl VariableItemValueCallbacksContext<'_> {
         redraw: bool,
     ) -> () {
         let view = unsafe { sys::variable_item_list_get_view(self.item.parent.as_ptr()) };
-        let _model = unsafe { sys::view_get_model(view) };
+        // NOTE: this function is necessary to lock the model
+        let _ = unsafe { sys::view_get_model(view) };
 
         let raw = self.item.inner.as_ptr();
         unsafe { sys::variable_item_set_current_value_index(raw, value) };
@@ -611,7 +617,8 @@ impl VariableItemValueCallbacksContext<'_> {
     /// reflected in the UI until the next update.
     pub fn override_value_label(&mut self, new_label: FuriString, redraw: bool) -> () {
         let view = unsafe { sys::variable_item_list_get_view(self.item.parent.as_ptr()) };
-        let _model = unsafe { sys::view_get_model(view) };
+        // NOTE: this function is necessary to lock the model
+        let _ = unsafe { sys::view_get_model(view) };
 
         self.value_label = new_label;
 
