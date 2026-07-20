@@ -9,7 +9,7 @@ use alloc::{boxed::Box, vec::Vec};
 use core::fmt::Debug;
 use core::ops::{Deref, DerefMut};
 use core::{
-    ffi::c_void,
+    ffi::{CStr, c_char, c_void},
     ptr::{self, NonNull},
 };
 use flipperzero_sys as sys;
@@ -83,6 +83,18 @@ pub struct VariableItemRef<'a, T> {
     list_index: usize,
 }
 
+impl<T> ufmt::uDebug for VariableItemRef<'_, T> {
+    fn fmt<W>(&self, f: &mut ufmt::Formatter<'_, W>) -> Result<(), W::Error>
+    where
+        W: ufmt::uWrite + ?Sized,
+    {
+        f.debug_struct("VariableItemRef")?
+            .field("index", &self.list_index)?
+            .field("label", self.get_label_mut().deref())?
+            .finish()
+    }
+}
+
 impl<'a, T> VariableItemRef<'a, T> {
     /// Locks the item list, and returns a mutable reference to the reference's associated
     /// item-type.
@@ -143,11 +155,14 @@ impl<'a> CallbackContext<'a, UniqueCallbackForEachItem<'a>> {
 }
 
 pub struct VariableItemValueCallbacksContext<'a> {
+    label_ptr: *const c_char,
     callbacks: Box<dyn OnCurrentValueTextChangedCallbacks + 'a>,
     value_label: FuriString,
     item: VariableItem,
     number_of_options: u8,
 }
+
+unsafe impl Send for VariableItemValueCallbacksContext<'_> {}
 
 impl Debug for VariableItemValueCallbacksContext<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -325,11 +340,12 @@ impl<'callbacks> VariableItemList<'callbacks, UniqueCallbackForEachItem<'callbac
         let list_index = items_guard.len();
 
         let mut item_context = Box::new_uninit();
+        let label_ptr = label.as_c_ptr();
 
         let variable_item = unsafe {
             sys::variable_item_list_add(
                 self.as_raw(),
-                label.as_c_ptr(),
+                label_ptr,
                 number_of_options,
                 Some(dispatch_value_changed_callback),
                 Box::as_ptr(&item_context).cast_mut().cast(),
@@ -344,6 +360,7 @@ impl<'callbacks> VariableItemList<'callbacks, UniqueCallbackForEachItem<'callbac
         };
 
         item_context.write(VariableItemValueCallbacksContext {
+            label_ptr,
             callbacks: Box::new(callbacks),
             value_label: FuriString::new(),
             item,
@@ -409,11 +426,12 @@ impl<'callbacks> VariableItemList<'callbacks, UniqueCallbackForEachItem<'callbac
         let list_index = items_guard.len();
 
         let mut item_context = Box::new_uninit();
+        let label_ptr = label.as_c_ptr();
 
         let variable_item = unsafe {
             sys::variable_item_list_add(
                 self.as_raw(),
-                label.as_c_ptr(),
+                label_ptr,
                 number_of_options,
                 Some(dispatch_value_changed_callback),
                 Box::as_mut_ptr(&mut item_context).cast(),
@@ -428,6 +446,7 @@ impl<'callbacks> VariableItemList<'callbacks, UniqueCallbackForEachItem<'callbac
         };
 
         item_context.write(VariableItemValueCallbacksContext {
+            label_ptr,
             callbacks: Box::new(on_current_value_changed_callbacks),
             value_label: FuriString::new(),
             item,
@@ -591,6 +610,13 @@ impl VariableItemValueCallbacksContext<'_> {
         // NOTE: this function is necessary to lock the model
         let _ = unsafe { sys::view_get_model(view) };
 
+        crate::trace!(
+            "setting number of options for item {:?} to {} (force redraw={})",
+            self.label(),
+            number_of_options,
+            redraw
+        );
+
         self.number_of_options = number_of_options;
 
         unsafe { sys::view_commit_model(view, redraw) };
@@ -616,9 +642,24 @@ impl VariableItemValueCallbacksContext<'_> {
         unsafe { sys::variable_item_set_current_value_index(raw, value) };
 
         if let Some(new_label) = label_override {
+            crate::trace!(
+                "setting currently selected value for item {:?} to {}, and overriding label to {} (force redraw={})",
+                self.label(),
+                value,
+                new_label,
+                redraw
+            );
+
             self.value_label = new_label;
 
             unsafe { sys::variable_item_set_current_value_text(raw, self.value_label.as_c_ptr()) };
+        } else {
+            crate::trace!(
+                "setting currently selected value for item {:?} to {}, leaving label unchanged (force redraw={})",
+                self.label(),
+                value,
+                redraw
+            );
         }
 
         unsafe { sys::view_commit_model(view, redraw) };
@@ -634,12 +675,43 @@ impl VariableItemValueCallbacksContext<'_> {
         // NOTE: this function is necessary to lock the model
         let _ = unsafe { sys::view_get_model(view) };
 
+        crate::trace!(
+            "setting label for item {:?} to {} (force redraw={})",
+            self.label(),
+            new_label,
+            redraw
+        );
+
         self.value_label = new_label;
 
         let raw = self.item.inner.as_ptr();
         unsafe { sys::variable_item_set_current_value_text(raw, self.value_label.as_c_ptr()) };
 
         unsafe { sys::view_commit_model(view, redraw) };
+    }
+
+    fn label<'borrow, 'label>(&'borrow self) -> DebugCStr<'borrow> {
+        // SAFETY: this pointer was extracted from a `FuriString`, which lives as long as the
+        // `VariableItem`, which is the same lifetime as this `VariableItemValueCallbacksContext`.
+        // TODO: reason about aliasing
+        let c_str = unsafe { CStr::from_ptr(self.label_ptr) };
+
+        DebugCStr(c_str)
+    }
+}
+
+struct DebugCStr<'a>(&'a CStr);
+
+impl ufmt::uDebug for DebugCStr<'_> {
+    fn fmt<W>(&self, f: &mut ufmt::Formatter<'_, W>) -> Result<(), W::Error>
+    where
+        W: ufmt::uWrite + ?Sized,
+    {
+        f.write_char('"')?;
+        for c in self.0.to_string_lossy().chars() {
+            f.write_char(c)?;
+        }
+        f.write_char('"')
     }
 }
 
