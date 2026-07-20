@@ -34,6 +34,19 @@ impl<C: ViewCallbacks + Debug> Debug for View<C> {
 }
 
 #[cfg(feature = "alloc")]
+impl<C: ViewCallbacks + ufmt::uDebug> ufmt::uDebug for View<C> {
+    fn fmt<W>(&self, f: &mut ufmt::Formatter<'_, W>) -> Result<(), W::Error>
+    where
+        W: ufmt::uWrite + ?Sized,
+    {
+        let callbacks: &C = &self.callbacks;
+        f.debug_struct("View")?
+            .field("callbacks", callbacks)?
+            .finish()
+    }
+}
+
+#[cfg(feature = "alloc")]
 impl<C: ViewCallbacks> View<C> {
     pub fn new(callbacks: C) -> Self {
         let inner = ViewInner::new();

@@ -340,6 +340,20 @@ impl<'a, VC: ViewCallbacks, VDC: ViewDispatcherCallbacks> ViewDispatcherView<'a,
 }
 
 #[cfg(feature = "alloc")]
+impl<VC: ViewCallbacks + ufmt::uDebug, VDC: ViewDispatcherCallbacks> ufmt::uDebug
+    for ViewDispatcherView<'_, VC, VDC>
+{
+    fn fmt<W>(&self, f: &mut ufmt::Formatter<'_, W>) -> Result<(), W::Error>
+    where
+        W: ufmt::uWrite + ?Sized,
+    {
+        f.debug_struct("ViewDispatcherView")?
+            .field("view", &self.view)?
+            .finish()
+    }
+}
+
+#[cfg(feature = "alloc")]
 impl<VC: ViewCallbacks, VDC: ViewDispatcherCallbacks> Drop for ViewDispatcherView<'_, VC, VDC> {
     fn drop(&mut self) {
         miri_write_to_stdout(b"Attempting to remove view from view dispatcher\n");

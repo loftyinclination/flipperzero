@@ -727,6 +727,17 @@ pub struct VariableItemListBoundToViewDispatcher<
     view: ViewDispatcherView<'gui, (), C>,
 }
 
+impl<'callbacks, 'gui, VDC: ViewDispatcherCallbacks, OnClickCallbacks: 'callbacks> ufmt::uDebug
+    for VariableItemListBoundToViewDispatcher<'callbacks, 'gui, VDC, OnClickCallbacks>
+{
+    fn fmt<W>(&self, f: &mut ufmt::Formatter<'_, W>) -> Result<(), W::Error>
+    where
+        W: ufmt::uWrite + ?Sized,
+    {
+        self.view.fmt(f)
+    }
+}
+
 impl<'callbacks, 'gui, VDC: ViewDispatcherCallbacks, OnClickCallbacks: 'callbacks>
     AsRef<ViewDispatcherView<'gui, (), VDC>>
     for VariableItemListBoundToViewDispatcher<'callbacks, 'gui, VDC, OnClickCallbacks>
