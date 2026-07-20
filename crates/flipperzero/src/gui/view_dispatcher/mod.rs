@@ -311,6 +311,9 @@ impl<'a, C: ViewDispatcherCallbacks> ViewDispatcherInner<'a, C> {
 impl<'a, VC: ViewCallbacks, VDC: ViewDispatcherCallbacks> AsRef<ViewDispatcherView<'a, VC, VDC>>
     for ViewDispatcherView<'a, VC, VDC>
 {
+    /// This method is redundant when used directly on [ViewDispatcherView<'a, VC, VDC>], but is
+    /// useful for adding this view as a child of other items, such as
+    /// [crate::gui::Submenu::add_nav_item].
     fn as_ref(&self) -> &ViewDispatcherView<'a, VC, VDC> {
         self
     }
