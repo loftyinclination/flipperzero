@@ -17,7 +17,6 @@ use lock_api::MappedMutexGuard;
 
 pub struct VariableItemList<'a, T> {
     inner: VariableItemListInner,
-    strings: Vec<FuriString>,
     context: Arc<CallbackContext<'a, T>>,
 }
 
@@ -49,6 +48,7 @@ unsafe impl Send for VariableItem {}
 
 struct CallbackContext<'a, T: 'a> {
     callback: Mutex<T>,
+    strings: Mutex<Vec<FuriString>>,
     items: Mutex<Vec<VariableItemType<'a>>>,
 }
 
@@ -97,6 +97,21 @@ impl<'a, T> VariableItemRef<'a, T> {
         )
     }
 
+    /// Locks the string list, and returns a mutable reference to the reference's label.
+    ///
+    /// Changes to this label will be applied the next time that the variable item list is redrawn
+    /// (perhaps by [VariableItemValueCallbacksContext::set_number_of_options],
+    /// [VariableItemValueCallbacksContext::set_currently_selected_value], or
+    /// [VariableItemValueCallbacksContext::override_value_label]).
+    pub fn get_label_mut(
+        &self,
+    ) -> lock_api::MappedMutexGuard<'_, crate::furi::sync::FuriMutex, FuriString> {
+        lock_api::MutexGuard::try_map(self.context.strings.lock(), |context| {
+            context.get_mut(self.list_index)
+        })
+        .expect(
+            "List index was gotten from inserting, so there should always be an item at the index",
+        )
     }
 }
 
@@ -192,12 +207,12 @@ impl<'callbacks> VariableItemList<'callbacks, UniqueCallbackForEachItem<'callbac
 
         let callback_context = CallbackContext {
             callback: Mutex::new(UniqueCallbackForEachItem(Vec::new())),
+            strings: Mutex::new(Vec::new()),
             items: Default::default(),
         };
 
         let res = Self {
             inner,
-            strings: Vec::new(),
             context: Arc::new(callback_context),
         };
 
@@ -235,7 +250,7 @@ impl<'callbacks> VariableItemList<'callbacks, UniqueCallbackForEachItem<'callbac
         };
 
         items_guard.push(VariableItemType::Plain(item));
-        self.strings.push(label);
+        self.context.strings.lock().push(label);
 
         drop(items_guard);
 
@@ -267,7 +282,7 @@ impl<'callbacks> VariableItemList<'callbacks, UniqueCallbackForEachItem<'callbac
         };
 
         items_guard.push(VariableItemType::Plain(item));
-        self.strings.push(label);
+        self.context.strings.lock().push(label);
 
         drop(items_guard);
 
@@ -353,7 +368,7 @@ impl<'callbacks> VariableItemList<'callbacks, UniqueCallbackForEachItem<'callbac
         items_guard.push(VariableItemType::WithValues(unsafe {
             item_context.assume_init()
         }));
-        self.strings.push(label);
+        self.context.strings.lock().push(label);
 
         drop(items_guard);
 
@@ -437,7 +452,7 @@ impl<'callbacks> VariableItemList<'callbacks, UniqueCallbackForEachItem<'callbac
         items_guard.push(VariableItemType::WithValues(unsafe {
             item_context.assume_init()
         }));
-        self.strings.push(label);
+        self.context.strings.lock().push(label);
 
         drop(items_guard);
 
@@ -462,9 +477,8 @@ impl<'callbacks> VariableItemList<'callbacks, UniqueCallbackForEachItem<'callbac
         {
             self.context.items.lock().clear();
             self.context.callback.lock().0.clear();
+            self.context.strings.lock().clear();
         }
-
-        self.strings.clear();
 
         unsafe { sys::variable_item_list_reset(self.as_raw()) };
     }
@@ -492,12 +506,12 @@ impl<'callback, C: Callback<'callback> + 'callback> VariableItemList<'callback, 
 
         let callback_context = CallbackContext {
             callback: Mutex::new(on_click_callback),
+            strings: Mutex::new(Vec::new()),
             items: Default::default(),
         };
 
         let res = Self {
             inner,
-            strings: Vec::new(),
             context: Arc::new(callback_context),
         };
 
@@ -517,7 +531,7 @@ impl<'callback, C: Callback<'callback> + 'callback> VariableItemList<'callback, 
     /// Note that this does not have any effect on the callback, which is left unchanged.
     pub fn clear(&mut self) -> () {
         self.context.items.lock().clear();
-        self.strings.clear();
+        self.context.strings.lock().clear();
 
         unsafe { sys::variable_item_list_reset(self.as_raw()) };
     }
@@ -560,7 +574,7 @@ impl<'callback, T> VariableItemList<'callback, T> {
 impl<T> Drop for VariableItemList<'_, T> {
     fn drop(&mut self) {
         self.context.items.lock().clear();
-        self.strings.clear();
+        self.context.strings.lock().clear();
 
         unsafe { sys::variable_item_list_free(self.as_raw()) };
     }
