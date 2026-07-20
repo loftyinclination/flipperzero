@@ -45,6 +45,7 @@ mod miri_bindings;
     non_upper_case_globals,
     non_camel_case_types,
     non_snake_case,
+    suspicious_runtime_symbol_definitions,
     clippy::missing_safety_doc,
     clippy::transmute_int_to_bool,
     clippy::useless_transmute,
