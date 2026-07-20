@@ -371,8 +371,8 @@ impl<'callbacks> VariableItemList<'callbacks, UniqueCallbackForEachItem<'callbac
     >(
         &mut self,
         label: FuriString,
-        number_of_options: u8,
         on_click_callback: C,
+        number_of_options: u8,
         on_current_value_changed_callbacks: D,
     ) -> VariableItemRef<'callbacks, UniqueCallbackForEachItem<'callbacks>> {
         let mut items_guard = self.context.items.lock();
