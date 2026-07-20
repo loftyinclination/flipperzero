@@ -4,9 +4,9 @@ use core::ffi::c_void;
 use core::ptr::{self, NonNull};
 use flipperzero_sys as sys;
 
-#[cfg(feature = "alloc")]
-use crate::internals::alloc::NonUniqueBox;
 use crate::{gui::canvas::CanvasView, input::InputEvent};
+#[cfg(feature = "alloc")]
+use alloc::boxed::Box;
 #[cfg(feature = "alloc")]
 use core::fmt::Debug;
 #[cfg(feature = "alloc")]
@@ -16,7 +16,7 @@ use core::mem::ManuallyDrop;
 #[cfg(feature = "alloc")]
 pub struct View<C: ViewCallbacks> {
     inner: ManuallyDrop<ViewInner>,
-    callbacks: NonUniqueBox<C>,
+    callbacks: Box<C>,
     should_drop: bool,
 }
 
@@ -37,7 +37,7 @@ impl<C: ViewCallbacks + Debug> Debug for View<C> {
 impl<C: ViewCallbacks> View<C> {
     pub fn new(callbacks: C) -> Self {
         let inner = ViewInner::new();
-        let callbacks = NonUniqueBox::new(callbacks);
+        let callbacks = Box::new(callbacks);
 
         let view = Self {
             inner: ManuallyDrop::new(inner),
@@ -54,10 +54,13 @@ impl<C: ViewCallbacks> View<C> {
                 // SAFETY: `canvas` is guaranteed to be a valid pointer
                 let canvas = unsafe { CanvasView::from_raw(canvas) };
 
-                let context: *mut C = model.cast();
+                let model: *mut *mut C = model.cast();
                 // SAFETY: `context` is stored in a `Box` which is a member of `View`
                 // and the callback is accessed exclusively by this function
-                unsafe { &mut *context }.on_draw(canvas);
+                let callbacks_ptr = unsafe { model.read() };
+                let callbacks = unsafe { &mut *callbacks_ptr };
+
+                callbacks.on_draw(canvas);
             }
 
             let callback = Some(dispatch_draw::<C> as _);
@@ -71,9 +74,14 @@ impl<C: ViewCallbacks> View<C> {
                 context: *mut c_void,
             ) -> u32 {
                 let context: *mut C = context.cast();
+
                 // SAFETY: `context` is stored in a `Box` which is a member of `View`
                 // and the callback is accessed exclusively by this function
-                match unsafe { &mut *context }.on_back_event() {
+                let callback = unsafe { &mut *context };
+
+                let on_back_event = callback.on_back_event();
+
+                match on_back_event {
                     Some(scene_id) => scene_id,
                     None => super::view_dispatcher::view_id::IGNORE,
                 }
@@ -97,9 +105,12 @@ impl<C: ViewCallbacks> View<C> {
                     .expect("`input_event` should be a valid event");
 
                 let context: *mut C = context.cast();
+
                 // SAFETY: `context` is stored in a `Box` which is a member of `View`
                 // and the callback is accessed exclusively by this function
-                unsafe { &mut *context }.on_input(input_event) == EventBubbling::Consumed
+                let callback = unsafe { &mut *context };
+
+                callback.on_input(input_event) == EventBubbling::Consumed
             }
 
             let callback = Some(dispatch_input::<C> as _);
@@ -111,9 +122,12 @@ impl<C: ViewCallbacks> View<C> {
         {
             pub unsafe extern "C" fn dispatch_enter<C: ViewCallbacks>(context: *mut c_void) -> () {
                 let context: *mut C = context.cast();
+
                 // SAFETY: `context` is stored in a `Box` which is a member of `View`
                 // and the callback is accessed exclusively by this function
-                unsafe { &mut *context }.on_enter()
+                let callback = unsafe { &mut *context };
+
+                callback.on_enter()
             }
 
             let callback = Some(dispatch_enter::<C> as _);
@@ -123,23 +137,27 @@ impl<C: ViewCallbacks> View<C> {
         {
             pub unsafe extern "C" fn dispatch_exit<C: ViewCallbacks>(context: *mut c_void) -> () {
                 let context: *mut C = context.cast();
+
                 // SAFETY: `context` is stored in a `Box` which is a member of `View`
                 // and the callback is accessed exclusively by this function
-                unsafe { &mut *context }.on_exit()
+                let callback = unsafe { &mut *context };
+
+                callback.on_exit()
             }
 
             let callback = Some(dispatch_exit::<C> as _);
             unsafe { sys::view_set_exit_callback(raw, callback) };
         }
 
-        let callbacks_ptr = view.callbacks.as_ptr();
+        let callbacks_ptr = Box::as_ptr(&view.callbacks).cast_mut();
         unsafe { sys::view_set_context(raw, callbacks_ptr.cast::<c_void>()) };
+
         {
             unsafe {
                 sys::view_allocate_model(raw, sys::ViewModelTypeLockFree, size_of::<*mut C>())
             };
             let model = unsafe { sys::view_get_model(raw) }.cast::<*mut C>();
-            unsafe { ptr::write(model, callbacks_ptr) };
+            unsafe { ptr::write::<*mut C>(model, callbacks_ptr) };
         }
 
         view
@@ -157,7 +175,7 @@ impl View<()> {
         Self {
             inner: ManuallyDrop::new(inner),
             should_drop: false,
-            callbacks: NonUniqueBox::new(()),
+            callbacks: Box::new(()),
         }
     }
 }

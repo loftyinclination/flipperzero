@@ -60,9 +60,12 @@ impl<C: ViewPortCallbacks> ViewPort<C> {
                 let canvas = unsafe { CanvasView::from_raw(canvas) };
 
                 let context: *mut C = context.cast();
+
                 // SAFETY: `context` is stored in a `Box` which is a member of `ViewPort`
                 // and the callback is accessed exclusively by this function
-                unsafe { &mut *context }.on_draw(canvas);
+                let callbacks = unsafe { &mut *context };
+
+                callbacks.on_draw(canvas);
             }
 
             if !ptr::eq(
