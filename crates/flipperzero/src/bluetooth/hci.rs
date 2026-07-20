@@ -3,7 +3,6 @@ use bt_hci::{
     cmd::{AsyncCmd, Cmd, CmdReturnBuf, SyncCmd},
     param::{RemainingBytes, Status},
 };
-use core::ptr;
 use flipperzero_sys as sys;
 
 pub use bt_hci::cmd;
@@ -27,9 +26,7 @@ impl From<FromHciBytesError> for HciError {
 ///
 /// NOTE: The [Command Complete](bt_hci::event::CommandComplete) event is processed by the STM32
 /// Copro library.
-pub fn send_hci_command<C: SyncCmd>(
-    payload: C,
-) -> Result<C::Return, HciError> {
+pub fn send_hci_command<C: SyncCmd>(payload: C) -> Result<C::Return, HciError> {
     let opcode = <C as Cmd>::OPCODE;
     let params = payload.params();
     let mut retval = C::ReturnBuf::new();
@@ -58,7 +55,19 @@ pub fn send_hci_command<C: SyncCmd>(
         rlen: C::ReturnBuf::LEN as i32,
     };
 
+    crate::trace!(
+        "Sending HCI command {:?} and waiting for CommandComplete response",
+        hci_request
+    );
+
     let status = (unsafe { flipperzero_sys::hci_send_req(&raw mut hci_request, 0) } as u8).into();
+
+    crate::trace!(
+        "Got response from HCI command {:?}: status={:?}",
+        hci_request,
+        status
+    );
+
     if status != Status::SUCCESS {
         return Err(HciError::Status(status));
     }
@@ -74,9 +83,7 @@ pub fn send_hci_command<C: SyncCmd>(
 ///
 /// NOTE: The [Command Status](bt_hci::event::CommandStatus) event is processed by the STM32
 /// Copro library.
-pub fn send_async_hci_command<C: AsyncCmd>(
-    payload: C,
-) -> Result<(), Status> {
+pub fn send_async_hci_command<C: AsyncCmd>(payload: C) -> Result<(), Status> {
     let opcode = <C as Cmd>::OPCODE;
     let params = payload.params();
 
@@ -94,17 +101,37 @@ pub fn send_async_hci_command<C: AsyncCmd>(
         data
     };
 
+    let mut status: Status = Status::new(0);
+
     let mut hci_request = sys::hci_request {
         ogf: opcode.group().to_raw() as u16,
         ocf: opcode.cmd(),
         event: 0, // UNUSED
         cparam: cparam.as_ptr().cast_mut().cast(),
         clen: params.size() as i32,
-        rparam: ptr::null_mut(),
-        rlen: 0,
+        rparam: (&raw mut status).cast(),
+        rlen: 1,
     };
 
-    let status = (unsafe { flipperzero_sys::hci_send_req(&raw mut hci_request, 0) } as u8).into();
+    crate::trace!(
+        "Sending HCI command {:?} and waiting for CommandStatus response",
+        hci_request
+    );
+
+    let send_status =
+        (unsafe { flipperzero_sys::hci_send_req(&raw mut hci_request, 0) } as u8).into();
+
+    crate::trace!(
+        "Got response from HCI command {:?}: send_status={}, status={}",
+        hci_request,
+        send_status,
+        status
+    );
+
+    if send_status != Status::SUCCESS {
+        return Err(send_status);
+    }
+
     if status != Status::SUCCESS {
         return Err(status);
     }

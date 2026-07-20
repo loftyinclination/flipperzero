@@ -17,9 +17,9 @@ pub mod profile;
 #[cfg(not(miri))]
 pub mod test_patterns;
 
+pub use bt_hci;
 pub use bt_hci::event;
 pub use bt_hci::param;
-pub use bt_hci as bt_hci;
 
 /// Returns `true` if core2 (which runs Bluetooth) is alive.
 pub fn is_alive() -> bool {
@@ -65,8 +65,7 @@ pub fn get_radio_stack() -> Result<SupportedRadioStack, RadioStack> {
         _ => {
             let status = unsafe { sys::ble_glue_get_c2_info() };
             let status = unsafe { &*status };
-            Err(
-            match status.StackType {
+            Err(match status.StackType {
                 0x01 => RadioStack::Full,
                 0x02 => RadioStack::Hci,
                 0x03 => RadioStack::Light,

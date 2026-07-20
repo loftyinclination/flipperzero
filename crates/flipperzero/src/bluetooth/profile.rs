@@ -15,6 +15,15 @@ pub struct Profile<'a, C: BleProfileCallbacks> {
     bluetooth: &'a Bluetooth,
 }
 
+impl<'a, C: BleProfileCallbacks + ufmt::uDebug> ufmt::uDebug for Profile<'a, C> {
+    fn fmt<W>(&self, f: &mut ufmt::Formatter<'_, W>) -> Result<(), W::Error>
+    where
+        W: ufmt::uWrite + ?Sized,
+    {
+        ufmt::uwrite!(f, "{:?}", unsafe { self.inner.as_ref() })
+    }
+}
+
 #[cfg(feature = "alloc")]
 impl<'a, C: BleProfileCallbacks + 'static> Profile<'a, C> {
     /// Change the current Bluetooth LE profile.
@@ -124,7 +133,9 @@ impl<'a, C: BleProfileCallbacks + 'static> Profile<'a, C> {
 
 impl<'a, C: BleProfileCallbacks> Drop for Profile<'a, C> {
     fn drop(&mut self) {
+        crate::trace!("dropping ble profile");
         unsafe { sys::bt_disconnect(self.bluetooth.as_ptr()) };
+        crate::trace!("dropped ble profile");
     }
 }
 
@@ -137,6 +148,17 @@ struct ProfileSetupContext<C: BleProfileCallbacks> {
 struct ProfileSuper<C> {
     config: FuriHalBleProfileBase,
     context: C,
+}
+
+impl<C: ufmt::uDebug> ufmt::uDebug for ProfileSuper<C> {
+    fn fmt<W>(&self, f: &mut ufmt::Formatter<'_, W>) -> Result<(), W::Error>
+    where
+        W: ufmt::uWrite + ?Sized,
+    {
+        f.debug_struct("Profile")?
+            .field("context", &self.context)?
+            .finish()
+    }
 }
 
 pub trait BleProfileContext {
@@ -168,7 +190,8 @@ pub trait BleProfileCallbacks: BleInitialiseProfileCallbacks {
     ) -> [u8; FURI_HAL_VERSION_DEVICE_NAME_LENGTH - 1] {
         let mut target = [0; FURI_HAL_VERSION_DEVICE_NAME_LENGTH - 1];
         let bytes = default_device_name.to_bytes();
-        target[..core::cmp::min(FURI_HAL_VERSION_DEVICE_NAME_LENGTH - 1, bytes.len())].copy_from_slice(bytes);
+        target[..core::cmp::min(FURI_HAL_VERSION_DEVICE_NAME_LENGTH - 1, bytes.len())]
+            .copy_from_slice(bytes);
         target
     }
 

@@ -1,14 +1,9 @@
-use alloc::boxed::Box;
 use alloc::sync::Arc;
 
-use crate::bluetooth::hci::HciError;
 use crate::bluetooth::profile::{BleProfileCallbacks, Profile};
-use crate::furi::sync::Mutex;
-use crate::furi::time::FuriDuration;
-use crate::{debug, error, warn};
+use crate::{error, trace};
 use bt_hci::FromHciBytes;
-use bt_hci::event::le::LeEvent;
-use bt_hci::event::EventPacket;
+use bt_hci::event::Event;
 use core::{ffi::c_void, ptr::NonNull};
 use flipperzero_sys as sys;
 
@@ -27,32 +22,53 @@ unsafe impl<PC: BleProfileCallbacks, BEC: BleEventCallbacks> Send
 {
 }
 
+impl<
+    'bluetooth,
+    'profile,
+    PC: BleProfileCallbacks + ufmt::uDebug,
+    BEC: BleEventCallbacks + ufmt::uDebug,
+> ufmt::uDebug for EventHandler<'bluetooth, 'profile, PC, BEC>
+{
+    fn fmt<W>(&self, f: &mut ufmt::Formatter<'_, W>) -> Result<(), W::Error>
+    where
+        W: ufmt::uWrite + ?Sized,
+    {
+        f.debug_struct("EventHandler")?
+            .field("handler", &self.handler.addr())?
+            .field("profile", &self.profile)?
+            .field("context", &(*self.context).callbacks)?
+            .finish()
+    }
+}
+
 impl<'bluetooth, 'profile, PC: BleProfileCallbacks, BEC: BleEventCallbacks>
     EventHandler<'bluetooth, 'profile, PC, BEC>
 {
+    /// Subscribes to BLE events, which will be handled by callbacks.
     pub fn subscribe(profile: &'profile Profile<'bluetooth, PC>, callbacks: BEC) -> Self {
         unsafe extern "C" fn dispatch_ble_event<C: BleEventCallbacks>(
             event: *mut c_void,
             context: *mut c_void,
         ) -> sys::BleEventAckStatus {
+            crate::trace!("BLE event received in handler");
             let context = unsafe { &mut *(context as *mut Context<C>) };
             let callbacks = &mut context.callbacks;
 
             #[repr(packed, C)]
             struct HciUartPacket {
                 kind: u8,
-                data: *const (),
+                data: [u8; 1],
             }
 
             let hci_uart_packet = unsafe { &*event.cast::<HciUartPacket>() };
-            let hci_event_packet_ptr = hci_uart_packet.data.cast::<HciEventPacket>();
+            let hci_event_packet_ptr = hci_uart_packet.data.as_ptr().cast::<HciEventPacket>();
             let hci_event_packet = unsafe { &*hci_event_packet_ptr };
 
             #[repr(packed, C)]
             struct HciEventPacket {
                 kind: u8,
                 len: u8,
-                // data: [u8; 1],
+                data: [u8; 1],
             }
 
             let data_len = hci_event_packet.len as usize;
@@ -60,13 +76,15 @@ impl<'bluetooth, 'profile, PC: BleProfileCallbacks, BEC: BleEventCallbacks>
             let event =
                 unsafe { core::slice::from_raw_parts(hci_event_packet_ptr.cast(), 2 + data_len) };
 
-            match EventPacket::from_hci_bytes_complete(event) {
+            crate::debug!("Handling event (len={}): payload: {:?}", data_len, event);
+
+            match Event::from_hci_bytes_complete(event) {
                 Ok(event_packet) => {
-                    debug!("sending BLE event to handler");
+                    crate::trace!("sending BLE event to handler");
 
                     let event_handled = callbacks.handle_event(event_packet);
 
-                    debug!("handler finished processing BLE event; {:?}", event_handled);
+                    crate::trace!("handler finished processing BLE event; {:?}", event_handled);
 
                     match event_handled {
                         // NOTE: we don't send out BleEventAckFlowDisable commands because that just
@@ -90,9 +108,9 @@ impl<'bluetooth, 'profile, PC: BleProfileCallbacks, BEC: BleEventCallbacks>
             }
         }
 
-        let context = Arc::new(Context {
-            callbacks,
-        });
+        let context = Arc::new(Context { callbacks });
+
+        trace!("Subscribing to handler");
 
         let handler = unsafe {
             sys::ble_event_dispatcher_register_svc_handler(
@@ -130,5 +148,5 @@ pub trait BleEventCallbacks: Send {
     ///
     /// Note: this will be invoked on the BLE GAP service thread.
     // TODO: should this take a bt_hci::event::Event enum instead of a packet?
-    fn handle_event<'a, 'b>(&'a mut self, event_packet: EventPacket<'b>) -> EventBubbling;
+    fn handle_event<'a, 'b>(&'a mut self, event_packet: Event<'b>) -> EventBubbling;
 }

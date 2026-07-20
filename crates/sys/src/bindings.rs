@@ -26783,7 +26783,7 @@ unsafe extern "C" {
     pub fn ble_event_dispatcher_unregister_svc_handler(handler: *mut GapSvcEventHandler);
 }
 #[repr(C)]
-#[derive(Debug, Copy, Clone)]
+#[derive(ufmt::derive::uDebug, Debug, Copy, Clone)]
 pub struct hci_request {
     pub ogf: u16,
     pub ocf: u16,
