@@ -12,6 +12,8 @@ pub fn panic(panic_info: &PanicInfo<'_>) -> ! {
     // Format: "thread: 'App Name' panicked at 'panic!', panic.rs:5"
     // Note: Don't use `format!` as it pulls in 10 KiB+ of formatting code.
     unsafe {
+        sys::furi_hal_light_set(sys::Light(0b0111), 0);
+        sys::furi_hal_light_set(sys::LightRed, 255);
         let thread_id = sys::furi_thread_get_current_id();
         let thread_name = if !thread_id.is_null() {
             sys::furi_thread_get_name(thread_id)
