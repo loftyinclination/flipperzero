@@ -308,6 +308,20 @@ impl<'a, C: ViewDispatcherCallbacks> ViewDispatcherInner<'a, C> {
 }
 
 #[cfg(feature = "alloc")]
+pub trait Switchable {
+    fn switch_to_view(&self) -> ();
+}
+
+#[cfg(feature = "alloc")]
+impl<VC: ViewCallbacks + ufmt::uDebug, VDC: ViewDispatcherCallbacks> Switchable
+    for ViewDispatcherView<'_, VC, VDC>
+{
+    fn switch_to_view(&self) -> () {
+        ViewDispatcherView::switch_to_view(&self);
+    }
+}
+
+#[cfg(feature = "alloc")]
 impl<'a, VC: ViewCallbacks, VDC: ViewDispatcherCallbacks> AsRef<ViewDispatcherView<'a, VC, VDC>>
     for ViewDispatcherView<'a, VC, VDC>
 {
@@ -339,6 +353,57 @@ impl<'a, VC: ViewCallbacks, VDC: ViewDispatcherCallbacks> ViewDispatcherView<'a,
 
     pub fn as_inner(&self) -> &ViewDispatcherInner<'a, VDC> {
         &self.view_dispatcher
+    }
+
+    /// Gets a new object that may be used to switch the dispatcher to this view. Useful for if you
+    /// need to reference the view and also pass it elsewhere as well.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use flipperzero::gui::Gui;
+    /// # use flipperzero::gui::submenu::Submenu;
+    /// # use flipperzero::gui::variable_item_list::VariableItemList;
+    /// # use flipperzero::gui::view_dispatcher::{ViewDispatcher, ViewDispatcherType};
+    ///
+    /// let gui = Gui::open();
+    /// let mut dispatcher = ViewDispatcher::new((), &gui, ViewDispatcherType::Fullscreen);
+    ///
+    /// let mut variable_item_list = VariableItemList::new()
+    ///     .bind_to_view_dispatcher(1, &dispatcher);
+    /// let switchable_variable_item_list = variable_item_list.clone_switchable();
+    ///
+    /// let mut submenu = Submenu::new();
+    /// let _ = submenu.add_nav_item(c"List", &switchable_variable_item_list);
+    ///
+    /// variable_item_list.push_item_plaintext("Post borrow item");
+    ///
+    /// ```
+    pub fn clone_switchable(&self) -> SwitchableRef<'a, VDC> {
+        SwitchableRef {
+            view_dispatcher: self.view_dispatcher.clone(),
+            id: self.id,
+            phantom: PhantomData,
+        }
+    }
+}
+
+#[cfg(feature = "alloc")]
+/// An object that is associated with a view and dispatcher, to allow the latter to switch the
+/// current view to the former.
+pub struct SwitchableRef<'a, VDC: ViewDispatcherCallbacks> {
+    view_dispatcher: Arc<ViewDispatcherInner<'a, VDC>>,
+    pub id: u32,
+    phantom: PhantomData<&'a ViewDispatcher<'a, VDC>>,
+}
+
+#[cfg(feature = "alloc")]
+impl<VDC: ViewDispatcherCallbacks> Switchable for SwitchableRef<'_, VDC> {
+    fn switch_to_view(&self) -> () {
+        let raw = self.view_dispatcher.as_raw();
+
+        crate::debug!("View dispatcher switch to view {}", self.id);
+        unsafe { sys::view_dispatcher_switch_to_view(raw, self.id) };
     }
 }
 

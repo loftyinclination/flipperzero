@@ -2,9 +2,8 @@
 
 #[cfg(feature = "alloc")]
 use crate::gui::view::View;
-use crate::gui::view::ViewCallbacks;
 #[cfg(feature = "alloc")]
-use crate::gui::view_dispatcher::ViewDispatcherView;
+use crate::gui::view_dispatcher::{Switchable, ViewDispatcherView};
 use crate::gui::view_dispatcher::{ViewDispatcher, ViewDispatcherCallbacks};
 use crate::input::InputType;
 use core::ops::{Deref, DerefMut};
@@ -198,11 +197,7 @@ impl<'gui, VDC: ViewDispatcherCallbacks> AsRef<ViewDispatcherView<'gui, (), VDC>
 impl<'gui, VDC: ViewDispatcherCallbacks> SubmenuBoundToViewDispatcher<'gui, VDC> {
     /// Adds a new item to the submenu that, when interacted with, will switch the
     /// `ViewDispatcher`'s current `View` to the one provided to this method.
-    pub fn add_nav_item<
-        'label,
-        VC: ViewCallbacks,
-        V: AsRef<ViewDispatcherView<'gui, VC, VDC>> + 'label,
-    >(
+    pub fn add_nav_item<'label, V: Switchable + 'label>(
         &mut self,
         label: &'label CStr,
         // TODO: allow this to take a view id?
@@ -212,7 +207,7 @@ impl<'gui, VDC: ViewDispatcherCallbacks> SubmenuBoundToViewDispatcher<'gui, VDC>
         let index = self.inner.count;
         self.inner.count += 1;
 
-        extern "C" fn switch_to_view<'a, VC: ViewCallbacks, VDC: ViewDispatcherCallbacks + 'a>(
+        extern "C" fn switch_to_view<'a, V: Switchable, VDC: ViewDispatcherCallbacks + 'a>(
             context: *mut c_void,
             _index: u32,
         ) -> () {
@@ -225,7 +220,7 @@ impl<'gui, VDC: ViewDispatcherCallbacks> SubmenuBoundToViewDispatcher<'gui, VDC>
                 miri_write_to_stdout(b"Submenu item clicked\n");
             }
 
-            let view = unsafe { &*context.cast::<ViewDispatcherView<'a, VC, VDC>>() };
+            let view = unsafe { &*context.cast::<V>() };
             view.switch_to_view();
         }
 
@@ -238,7 +233,7 @@ impl<'gui, VDC: ViewDispatcherCallbacks> SubmenuBoundToViewDispatcher<'gui, VDC>
                 raw,
                 label.as_ptr(),
                 index,
-                Some(switch_to_view::<VC, VDC>),
+                Some(switch_to_view::<V, VDC>),
                 context.cast(),
             )
         };
