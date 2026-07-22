@@ -458,7 +458,7 @@ impl<VC: ViewCallbacks, VDC: ViewDispatcherCallbacks> Drop for ViewDispatcherVie
 }
 
 impl<'a, C: ViewDispatcherCallbacks> ViewDispatcherInner<'a, C> {
-    pub fn switch_to_view(&mut self, id: u32) {
+    pub fn switch_to_view(&self, id: u32) {
         if self.views().contains_key(&id) {
             let raw = self.as_raw();
             self.current_view.store(id, Ordering::Release);
