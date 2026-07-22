@@ -570,7 +570,7 @@ impl CallbackOption for Navigation {
 
             let _ = Arc::into_raw(context);
 
-            result == StopDispatcher::Yes
+            result != StopDispatcher::Yes
         }
 
         let callback = Some(dispatch_navigation::<C> as _);
