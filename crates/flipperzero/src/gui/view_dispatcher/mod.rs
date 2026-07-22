@@ -14,7 +14,7 @@ use core::{
     num::NonZeroU32,
     ops::Deref,
     ptr::NonNull,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::atomic::{AtomicBool, AtomicU32, Ordering},
 };
 
 use flipperzero_sys::{self as sys, ViewDispatcher as SysViewDispatcher};
@@ -28,9 +28,9 @@ use crate::gui::view::{View, ViewCallbacks};
 type ViewSet = BTreeMap<u32, AtomicBool>;
 
 #[doc(hidden)]
-pub mod view_id {
+pub(crate) mod view_id {
     /// Special view ID which hides drawing view_port.
-    const NONE: u32 = 0xFFFFFFFF;
+    pub const NONE: u32 = 0xFFFFFFFF;
 
     /// Special view ID which ignores navigation event.
     pub const IGNORE: u32 = 0xFFFFFFFE;
@@ -48,6 +48,7 @@ pub struct ViewDispatcher<'a, C: ViewDispatcherCallbacks>(
 pub struct ViewDispatcherInner<'a, C: ViewDispatcherCallbacks> {
     inner: NonNull<SysViewDispatcher>,
     callbacks: C,
+    pub(crate) current_view: Arc<AtomicU32>,
     // TODO: propose API to Flipper for checked view addition/removal, which would allow for this
     // local field to be removed
     views: ViewSet,
@@ -78,15 +79,22 @@ impl<'a, C: ViewDispatcherCallbacks> ViewDispatcher<'a, C> {
     pub fn add_view<VC: ViewCallbacks>(
         &mut self,
         id: u32,
-        view: View<VC>,
+        mut view: View<VC>,
     ) -> Result<ViewDispatcherView<'a, VC, C>, View<VC>> {
         miri_write_to_stdout(b"Adding view to dispatcher\n");
+        view.callbacks.view_dispatcher_current_view_id = Some(self.0.current_view.clone());
+
         let view_dispatcher = self.0.clone();
         // SAFETY: the only references to the ViewDispatcherInner are ourselves, and any potential
         // reference stored in the sys::ViewDispatcher's context, which are not mutable. As such,
         // it's okay to get a mutable reference here
         let inner = unsafe { Arc::get_mut_unchecked(&mut self.0) };
         inner.add_view(view_dispatcher, id, view)
+    }
+
+    #[cfg(feature = "alloc")]
+    pub fn get_current_view(&self) -> Option<u32> {
+        self.0.get_current_view()
     }
 
     /// Runs this view dispatcher.
@@ -149,6 +157,7 @@ impl<'a, C: ViewDispatcherCallbacks> ViewDispatcherInner<'a, C> {
         let view_dispatcher = Arc::new(Self {
             inner,
             callbacks,
+            current_view: Arc::new(AtomicU32::new(view_id::NONE)),
             views: BTreeMap::new(),
             _phantom: PhantomData,
         });
@@ -230,7 +239,8 @@ impl<'a, C: ViewDispatcherCallbacks> ViewDispatcherRef<'a, C> {
     }
 
     pub fn switch_to_view(&self, id: u32) -> () {
-        let view_dispatcher = self.inner.upgrade().unwrap();
+        let view_dispatcher: Arc<ViewDispatcherInner<'a, C>> = self.inner.upgrade().unwrap();
+        view_dispatcher.current_view.store(id, Ordering::Release);
         let raw = view_dispatcher.as_raw();
 
         miri_write_to_stdout(b"View dispatcher switch to view\n");
@@ -305,6 +315,14 @@ impl<'a, C: ViewDispatcherCallbacks> ViewDispatcherInner<'a, C> {
     pub fn get_context_mut(&mut self) -> &mut C {
         &mut self.callbacks
     }
+
+    #[cfg(feature = "alloc")]
+    pub fn get_current_view(&self) -> Option<u32> {
+        match self.current_view.load(Ordering::Acquire) {
+            view_id::NONE => None,
+            id => Some(id),
+        }
+    }
 }
 
 #[cfg(feature = "alloc")]
@@ -345,6 +363,7 @@ pub struct ViewDispatcherView<'a, VC: ViewCallbacks, VDC: ViewDispatcherCallback
 #[cfg(feature = "alloc")]
 impl<'a, VC: ViewCallbacks, VDC: ViewDispatcherCallbacks> ViewDispatcherView<'a, VC, VDC> {
     pub fn switch_to_view(&self) {
+        self.view_dispatcher.current_view.store(self.id, Ordering::Release);
         let raw = self.view_dispatcher.as_raw();
 
         crate::debug!("View dispatcher switch to view {}", self.id);
@@ -400,6 +419,7 @@ pub struct SwitchableRef<'a, VDC: ViewDispatcherCallbacks> {
 #[cfg(feature = "alloc")]
 impl<VDC: ViewDispatcherCallbacks> Switchable for SwitchableRef<'_, VDC> {
     fn switch_to_view(&self) -> () {
+        self.view_dispatcher.current_view.store(self.id, Ordering::Release);
         let raw = self.view_dispatcher.as_raw();
 
         crate::debug!("View dispatcher switch to view {}", self.id);
@@ -441,6 +461,7 @@ impl<'a, C: ViewDispatcherCallbacks> ViewDispatcherInner<'a, C> {
     pub fn switch_to_view(&mut self, id: u32) {
         if self.views().contains_key(&id) {
             let raw = self.as_raw();
+            self.current_view.store(id, Ordering::Release);
             unsafe { sys::view_dispatcher_switch_to_view(raw, id) };
         }
     }
