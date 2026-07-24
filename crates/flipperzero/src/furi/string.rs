@@ -89,6 +89,9 @@ impl FuriString {
 
     /// Extracts a pointer to a raw zero-terminated string
     /// containing the entire string slice.
+    ///
+    /// The pointer remains valid until the next call that
+    /// modifies the string or the string is dropped.
     #[inline]
     #[must_use]
     pub fn as_c_ptr(&self) -> *const c_char {
@@ -272,7 +275,10 @@ impl FuriString {
     /// its capacity.
     #[inline]
     pub fn clear(&mut self) {
-        unsafe { sys::furi_string_reset(self.0.as_ptr()) };
+        // This used to call `furi_string_reset` but as of flipperdevices/flipperzero-firmware@a46038acbf576a3102c6d89c0f142c537e3cae1f
+        // `furi_string_reset` is now equivalent to a m-string `string_clear` + `string_init`
+        // invalidating the existing capacity and any associated pointers.
+        self.truncate(0)
     }
 }
 
@@ -888,5 +894,15 @@ mod tests {
         for (l, r) in s.chars_lossy().zip("f�r".chars()) {
             assert_eq!(l, r);
         }
+    }
+
+    #[test]
+    fn clear_pointer_invalidation() {
+        let mut s = FuriString::from(CStr::from_bytes_with_nul(b"Hello, world\0").unwrap());
+        let p1 = s.as_c_ptr();
+        s.clear();
+        let p2 = s.as_c_ptr();
+
+        assert_eq!(p1, p2, "clear should not invalidate existing pointer");
     }
 }
