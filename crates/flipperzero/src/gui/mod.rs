@@ -136,12 +136,14 @@ impl<'a, VPC: ViewPortCallbacks> GuiViewPort<'a, VPC> {
         unsafe { sys::gui_view_port_send_to_front(gui, view_port) };
     }
 
-    // pub fn send_to_back(&mut self) {
-    //     let gui = self.parent.as_gui();
-    //     let view_port = self.view_port.as_raw();
-    //
-    //     unsafe { sys::gui_view_port_send_to_back(gui, view_port) };
-    // }
+    /// Send this view port to the back of the GUI.
+    pub fn send_to_back(&mut self) {
+        let gui = self.parent.as_ptr();
+        let view_port = self.view_port.as_raw();
+
+        // SAFETY: `self.parent` outlives this `GuiVewPort`
+        unsafe { sys::gui_view_port_send_to_back(gui, view_port) };
+    }
 
     /// Queue a GUI update.
     ///
