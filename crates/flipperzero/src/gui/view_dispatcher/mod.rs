@@ -351,7 +351,7 @@ impl<VC: ViewCallbacks + ufmt::uDebug, VDC: ViewDispatcherCallbacks> Switchable
     for ViewDispatcherView<'_, VC, VDC>
 {
     fn switch_to_view(&self) -> () {
-        ViewDispatcherView::switch_to_view(&self);
+        ViewDispatcherView::switch_to_view(self);
     }
 }
 

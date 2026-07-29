@@ -207,7 +207,7 @@ impl<'gui, VDC: ViewDispatcherCallbacks> SubmenuBoundToViewDispatcher<'gui, VDC>
         let index = self.inner.count;
         self.inner.count += 1;
 
-        extern "C" fn switch_to_view<'a, V: Switchable, VDC: ViewDispatcherCallbacks + 'a>(
+        extern "C" fn switch_to_view<'a, V: Switchable>(
             context: *mut c_void,
             _index: u32,
         ) -> () {
@@ -233,7 +233,7 @@ impl<'gui, VDC: ViewDispatcherCallbacks> SubmenuBoundToViewDispatcher<'gui, VDC>
                 raw,
                 label.as_ptr(),
                 index,
-                Some(switch_to_view::<V, VDC>),
+                Some(switch_to_view::<V>),
                 context.cast(),
             )
         };

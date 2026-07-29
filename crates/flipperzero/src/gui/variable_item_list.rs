@@ -209,7 +209,7 @@ impl<'callbacks> VariableItemList<'callbacks, UniqueCallbackForEachItem<'callbac
             VariableItemListInner(unsafe { NonNull::new_unchecked(variable_item_list) })
         };
 
-        unsafe extern "C" fn dispatch_callback<'callbacks>(context: *mut c_void, index: u32) -> () {
+        unsafe extern "C" fn dispatch_callback(context: *mut c_void, index: u32) -> () {
             unsafe { Arc::increment_strong_count(context) };
 
             let context: Arc<CallbackContext<UniqueCallbackForEachItem>> =
