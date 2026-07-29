@@ -146,7 +146,7 @@ impl Submenu {
     /// [`sys::SceneManager`]. However, it is possible to just treat it as any other view, and use
     /// it directly with the `ViewDispatcher`.
     ///
-    /// Note that the submenu does not define a [previous view](`ViewCallbacks::on_back_event`),
+    /// Note that the submenu does not define a [previous view](`crate::gui::view::ViewCallbacks::on_back_event`),
     /// and so any back events that occur while this view is current will not be consumed, and will
     /// hand control to [`ViewDispatcherCallbacks::on_navigation`].
     #[cfg(feature = "alloc")]

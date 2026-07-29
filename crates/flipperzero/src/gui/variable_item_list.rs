@@ -1,4 +1,5 @@
-//! Safe wrapper for dealing with allocations and freeing for the variable item list
+//! A list, where each item may have selectable options, and a corresponding label. See any
+//! settings page.
 
 use crate::furi::string::FuriString;
 use crate::furi::sync::{FuriMutex, Mutex};
@@ -15,11 +16,13 @@ use core::{
 use flipperzero_sys as sys;
 use lock_api::MappedMutexGuard;
 
+/// The Item List.
 pub struct VariableItemList<'a, T> {
     inner: VariableItemListInner,
     context: Arc<CallbackContext<'a, T>>,
 }
 
+/// A safe wrapper around the [sys::VariableItemList].
 struct VariableItemListInner(NonNull<sys::VariableItemList>);
 
 impl VariableItemListInner {
@@ -30,6 +33,7 @@ impl VariableItemListInner {
 
 unsafe impl Send for VariableItemListInner {}
 
+/// An item in the list.
 pub struct VariableItem {
     list_index: usize,
     inner: NonNull<sys::VariableItem>,

@@ -1,3 +1,6 @@
+//! Structures for representing Input events. Note that, in order to interact with an input event,
+//! you likely want the [gui module](crate::gui) instead.
+
 mod key;
 mod r#type;
 

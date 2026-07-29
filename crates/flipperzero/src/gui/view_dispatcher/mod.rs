@@ -1,4 +1,10 @@
-//! View dispatcher APIs.
+//! One of the main primitives for holding views and having them drawn on the screen.
+//!
+//! The view dispatcher contains a list of views, and allows for switching between different ones.
+//! By binding it to a [ViewPort](super::view_port::ViewPort) that has been associated with the
+//! [Gui] record, the flipper will draw the [current](ViewDispatcherInner::current_view)
+//! [view](super::view::View) to the [screen](super::canvas::CanvasView), and any [input events](crate::input::InputEvent)
+//! will be sent to the view for handling.
 
 mod r#type;
 
@@ -36,12 +42,16 @@ pub(crate) mod view_id {
     pub const IGNORE: u32 = 0xFFFFFFFE;
 }
 
+/// The view dispatcher object.
+///
+/// A holder for a collection of views, which can be switched between. The current view will be
+/// drawn to the canvas, and will receive all input events.
 pub struct ViewDispatcher<'a, C: ViewDispatcherCallbacks>(
     #[cfg(miri)] pub Arc<ViewDispatcherInner<'a, C>>,
     #[cfg(not(miri))] Arc<ViewDispatcherInner<'a, C>>,
 );
 
-/// System ViewDispatcher.
+/// A safe wrapper around the [SysViewDispatcher], with some additional fields for tracking state.
 ///
 /// A holder for a collection of views, which can be switched between. The current view will be
 /// drawn to the canvas, and will receive all input events.
@@ -60,6 +70,7 @@ unsafe impl<'a, V: ViewDispatcherCallbacks> Send for ViewDispatcherInner<'a, V> 
 unsafe impl<'a, V: ViewDispatcherCallbacks> Sync for ViewDispatcherInner<'a, V> {}
 
 impl<'a, C: ViewDispatcherCallbacks> ViewDispatcher<'a, C> {
+    /// Creates a new view dispatcher, bound to the [Gui].
     pub fn new(callbacks: C, gui: &'a Gui, kind: ViewDispatcherType) -> Self {
         Self(ViewDispatcherInner::new(callbacks, gui, kind))
     }
@@ -69,6 +80,7 @@ impl<'a, C: ViewDispatcherCallbacks> ViewDispatcher<'a, C> {
         &mut inner.callbacks
     }
 
+    /// Creates a sharable reference to the view dispatcher.
     pub fn get_ref(&mut self) -> ViewDispatcherRef<'a, C> {
         ViewDispatcherRef {
             inner: Arc::downgrade(&self.0),
@@ -326,7 +338,11 @@ impl<'a, C: ViewDispatcherCallbacks> ViewDispatcherInner<'a, C> {
 }
 
 #[cfg(feature = "alloc")]
+/// A view bound to a [ViewDispatcher] that may be switched to, in order to become the currently
+/// shown and handling view.
 pub trait Switchable {
+    /// Switch this view to be the current view of the dispatcher. It will then be drawn to the
+    /// screen, and will receive any input events.
     fn switch_to_view(&self) -> ();
 }
 
@@ -345,7 +361,7 @@ impl<'a, VC: ViewCallbacks, VDC: ViewDispatcherCallbacks> AsRef<ViewDispatcherVi
 {
     /// This method is redundant when used directly on [ViewDispatcherView<'a, VC, VDC>], but is
     /// useful for adding this view as a child of other items, such as
-    /// [crate::gui::Submenu::add_nav_item].
+    /// [crate::gui::submenu::SubmenuBoundToViewDispatcher::add_nav_item].
     fn as_ref(&self) -> &ViewDispatcherView<'a, VC, VDC> {
         self
     }
@@ -353,6 +369,7 @@ impl<'a, VC: ViewCallbacks, VDC: ViewDispatcherCallbacks> AsRef<ViewDispatcherVi
 
 #[cfg(feature = "alloc")]
 #[must_use]
+/// A view that is bound to a dispatcher, and may be switched to.
 pub struct ViewDispatcherView<'a, VC: ViewCallbacks, VDC: ViewDispatcherCallbacks> {
     view_dispatcher: Arc<ViewDispatcherInner<'a, VDC>>,
     view: View<VC>,
@@ -362,16 +379,16 @@ pub struct ViewDispatcherView<'a, VC: ViewCallbacks, VDC: ViewDispatcherCallback
 
 #[cfg(feature = "alloc")]
 impl<'a, VC: ViewCallbacks, VDC: ViewDispatcherCallbacks> ViewDispatcherView<'a, VC, VDC> {
+    /// Switch this view to be the current view of the dispatcher. It will then be drawn to the
+    /// screen, and will receive any input events.
     pub fn switch_to_view(&self) {
-        self.view_dispatcher.current_view.store(self.id, Ordering::Release);
+        self.view_dispatcher
+            .current_view
+            .store(self.id, Ordering::Release);
         let raw = self.view_dispatcher.as_raw();
 
         crate::debug!("View dispatcher switch to view {}", self.id);
         unsafe { sys::view_dispatcher_switch_to_view(raw, self.id) };
-    }
-
-    pub fn as_inner(&self) -> &ViewDispatcherInner<'a, VDC> {
-        &self.view_dispatcher
     }
 
     /// Gets a new object that may be used to switch the dispatcher to this view. Useful for if you
@@ -419,7 +436,9 @@ pub struct SwitchableRef<'a, VDC: ViewDispatcherCallbacks> {
 #[cfg(feature = "alloc")]
 impl<VDC: ViewDispatcherCallbacks> Switchable for SwitchableRef<'_, VDC> {
     fn switch_to_view(&self) -> () {
-        self.view_dispatcher.current_view.store(self.id, Ordering::Release);
+        self.view_dispatcher
+            .current_view
+            .store(self.id, Ordering::Release);
         let raw = self.view_dispatcher.as_raw();
 
         crate::debug!("View dispatcher switch to view {}", self.id);
@@ -458,6 +477,8 @@ impl<VC: ViewCallbacks, VDC: ViewDispatcherCallbacks> Drop for ViewDispatcherVie
 }
 
 impl<'a, C: ViewDispatcherCallbacks> ViewDispatcherInner<'a, C> {
+    /// Switch the dispatcher's current view to the view that was registered at id. If no view
+    /// exists, this will do nothing.
     pub fn switch_to_view(&self, id: u32) {
         if self.views().contains_key(&id) {
             let raw = self.as_raw();
@@ -487,19 +508,29 @@ pub enum StopDispatcher {
     No,
 }
 
-trait BindOption<T: CallbackOption> {
+/// Binds an event callback function.
+trait BindOption<Option: CallbackOption> {
+    /// Bind the callback associated with this Option type, and return whether it was bound.
     fn bind<C: ViewDispatcherCallbacks>(context: &C, raw: *mut SysViewDispatcher) -> bool;
 }
 
-pub struct ShouldBind<T> {
-    _phantom: core::marker::PhantomData<T>,
+/// An object for binding event callback functions to the dispatcher.
+///
+/// `Option` specifies the specific event callback that should be bound; either the
+/// [custom event callback](ViewDispatcherCallbacks::on_custom),
+/// [navigation event callback](ViewDispatcherCallbacks::on_navigation), or
+/// [tick elapsed callback](ViewDispatcherCallbacks::on_tick).
+pub struct Bind<Option> {
+    _phantom: core::marker::PhantomData<Option>,
 }
-impl<T: CallbackOption> BindOption<T> for ShouldBind<T> {
+
+impl<T: CallbackOption> BindOption<T> for Bind<T> {
     fn bind<C: ViewDispatcherCallbacks>(context: &C, raw: *mut SysViewDispatcher) -> bool {
         T::bind::<C>(context, raw)
     }
 }
 
+/// An object that skips binding a callback.
 pub struct DontBind;
 
 impl<T: CallbackOption> BindOption<T> for DontBind {
@@ -508,8 +539,9 @@ impl<T: CallbackOption> BindOption<T> for DontBind {
     }
 }
 
+/// A binding method that has been specialised for a specific event callback method.
 trait CallbackOption {
-    fn bind<T: ViewDispatcherCallbacks>(context: &T, raw: *mut SysViewDispatcher) -> bool;
+    fn bind<C: ViewDispatcherCallbacks>(context: &C, raw: *mut SysViewDispatcher) -> bool;
 }
 
 #[cfg(miri)]
@@ -520,6 +552,8 @@ unsafe extern "Rust" {
 #[cfg(not(miri))]
 fn miri_write_to_stdout(_bytes: &[u8]) {}
 
+#[doc(hidden)]
+/// Binding for [ViewDispatcherCallbacks::on_custom].
 pub struct Custom;
 impl CallbackOption for Custom {
     fn bind<C: ViewDispatcherCallbacks>(_context: &C, raw: *mut SysViewDispatcher) -> bool {
@@ -551,6 +585,8 @@ impl CallbackOption for Custom {
     }
 }
 
+#[doc(hidden)]
+/// Binding for [ViewDispatcherCallbacks::on_navigation].
 pub struct Navigation;
 impl CallbackOption for Navigation {
     fn bind<C: ViewDispatcherCallbacks>(_context: &C, raw: *mut SysViewDispatcher) -> bool {
@@ -582,6 +618,8 @@ impl CallbackOption for Navigation {
     }
 }
 
+#[doc(hidden)]
+/// Binding for [ViewDispatcherCallbacks::on_tick].
 pub struct Tick;
 impl CallbackOption for Tick {
     fn bind<C: ViewDispatcherCallbacks>(context: &C, raw: *mut SysViewDispatcher) -> bool {
@@ -607,17 +645,17 @@ impl CallbackOption for Tick {
     }
 }
 
-/// Callbacks for [`ViewDispatcher`].
+/// Handlers for events received by the [ViewDispatcher].
 #[allow(unused_variables)]
 pub trait ViewDispatcherCallbacks {
-    type BindCustom: BindOption<Custom> = ShouldBind<Custom>;
-    type BindNavigation: BindOption<Navigation> = ShouldBind<Navigation>;
-    type BindTick: BindOption<Tick> = ShouldBind<Tick>;
+    type BindCustom: BindOption<Custom> = Bind<Custom>;
+    type BindNavigation: BindOption<Navigation> = Bind<Navigation>;
+    type BindTick: BindOption<Tick> = Bind<Tick>;
 
-    /// Called on a Custom Event [`sys::view_dispatcher_send_custom_event`], if that custom event
+    /// Called on a Custom Event [sys::view_dispatcher_send_custom_event], if that custom event
     /// is otherwise not consumed.
     ///
-    /// Only called if the view_dispatcher's current view's [`sys::ViewCustomCallback`] method
+    /// Only called if the dispatcher's current view's [super::view::ViewCallbacks::on_custom_event] method
     /// returns false.
     ///
     /// The return value of this function is unused.

@@ -1,4 +1,4 @@
-//! GUI service.
+//! APIs for drawing on to the canvas, handling entering and leaving different views, as well as reacting to [input events](crate::input::InputEvent).
 
 mod gui_layer;
 
