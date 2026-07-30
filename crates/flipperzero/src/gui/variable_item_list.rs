@@ -16,7 +16,7 @@ use core::{
 use flipperzero_sys as sys;
 use lock_api::MappedMutexGuard;
 
-/// The Item List.
+/// The list.
 pub struct VariableItemList<'a, T> {
     inner: VariableItemListInner,
     context: Arc<CallbackContext<'a, T>>,
@@ -51,8 +51,14 @@ impl Debug for VariableItem {
 
 unsafe impl Send for VariableItem {}
 
+/// The context for the list's [enter callback](sys::variable_item_list_set_enter_callback).
+///
+/// T will either be a function pointer, or will be [UniqueCallbackForEachItem].
 struct CallbackContext<'a, T: 'a> {
+    /// The callback to invoke.
     callback: Mutex<T>,
+
+    /// The items themself.
     items: Mutex<Vec<VariableItemType<'a>>>,
 }
 
@@ -82,6 +88,9 @@ impl<'a, T> CallbackContext<'a, T> {
     }
 }
 
+/// An object that can be used to get the [VariableItem].
+///
+/// This is the type that is returned whenever an item is added.
 pub struct VariableItemRef<'a, T> {
     context: Arc<CallbackContext<'a, T>>,
     list_index: usize,
@@ -106,12 +115,10 @@ impl<T> ufmt::uDebug for VariableItemRef<'_, T> {
     }
 }
 
-impl<'a, T> VariableItemRef<'a, T> {
+impl<'callbacks, T> VariableItemRef<'callbacks, T> {
     /// Locks the item list, and returns a mutable reference to the reference's associated
     /// item-type.
-    pub fn get_mut(
-        &self,
-    ) -> lock_api::MappedMutexGuard<'_, crate::furi::sync::FuriMutex, VariableItemType<'a>> {
+    pub fn get_mut<'guard>(&'guard self) -> MutexGuardedVariableItemType<'guard, 'callbacks> {
         lock_api::MutexGuard::try_map(self.context.items.lock(), |context| {
             context.get_mut(self.list_index)
         })
@@ -121,6 +128,7 @@ impl<'a, T> VariableItemRef<'a, T> {
     }
 }
 
+/// The type of the item.
 #[derive(Debug)]
 pub enum VariableItemType<'a> {
     Plain(VariableItem),
@@ -169,6 +177,7 @@ impl<'a> CallbackContext<'a, UniqueCallbackForEachItem<'a>> {
     }
 }
 
+/// The context for the callbacks that are invoked in reaction to changes in values.
 pub struct VariableItemValueCallbacksContext<'a> {
     callbacks: Box<dyn OnCurrentValueTextChangedCallbacks + 'a>,
     value_label: FuriString,
@@ -699,6 +708,8 @@ impl VariableItemValueCallbacksContext<'_> {
     }
 }
 
+/// The list, bound to and selectable by a dispatcher.
+///
 /// VariableItemList is usually used alongside a [Scene Manager](`sys::SceneManager`), but may also be used
 /// directly.
 pub struct VariableItemListBoundToViewDispatcher<
