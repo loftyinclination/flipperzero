@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 
 - Fixed `flipperzero_sys::furi::alloc::FuriBox` not calling `Drop` on `T`
+- `FuriString::clear` is now equivalent to `furi_string_left(0)` rather than `furi_string_reset` (see #271)
 
 ### Removed
 
