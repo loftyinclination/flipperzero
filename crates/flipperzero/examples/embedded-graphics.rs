@@ -39,7 +39,7 @@ entry!(main);
 
 // Entry point
 fn main(_args: Option<&CStr>) -> i32 {
-    let gui = Gui::open();
+    let mut gui = Gui::open();
     let mut canvas = gui.direct_draw_acquire();
 
     // Create styles used by the drawing operations.

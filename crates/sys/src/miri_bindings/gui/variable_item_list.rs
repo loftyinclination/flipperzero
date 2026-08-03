@@ -200,6 +200,9 @@ pub unsafe fn variable_item_list_get_selected_item_index(
 ) -> u8 {
     todo!()
 }
+pub unsafe fn variable_item_set_item_label(item: *mut VariableItem, label: *const c_char) {
+    todo!()
+}
 #[doc = "Set item current selected index\n\n # Arguments\n\n* `item` - VariableItem* instance\n * `current_value_index` - The current value index"]
 pub unsafe fn variable_item_set_current_value_index(
     item: *mut VariableItem,

@@ -319,6 +319,9 @@ pub unsafe fn gui_remove_view_port(gui: *mut Gui, view_port: *mut ViewPort) {
 pub unsafe fn gui_view_port_send_to_front(gui: *mut Gui, view_port: *mut ViewPort) {
     todo!()
 }
+pub unsafe fn gui_view_port_send_to_back(gui: *mut Gui, view_port: *mut ViewPort) {
+    todo!()
+}
 pub const GuiButtonTypeLeft: GuiButtonType = GuiButtonType(0);
 pub const GuiButtonTypeCenter: GuiButtonType = GuiButtonType(1);
 pub const GuiButtonTypeRight: GuiButtonType = GuiButtonType(2);
