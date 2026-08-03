@@ -11,7 +11,7 @@ extern crate flipperzero_rt;
 use alloc::sync::Arc;
 use bt_hci::FromHciBytes;
 use bt_hci::event::le::{LeAdvertisingReport, LeConnectionComplete, LeEvent, LeEventPacket};
-use bt_hci::event::{EventKind, EventPacket};
+use bt_hci::event::{Event, EventKind, EventPacket};
 use core::ffi::CStr;
 use flipperzero::bluetooth::Bluetooth;
 use flipperzero::bluetooth::handler::{BleEventCallbacks, EventBubbling, EventHandler};
@@ -72,14 +72,9 @@ impl BleProfileCallbacks for ProfileState {
 struct HandlerState;
 
 impl BleEventCallbacks for HandlerState {
-    fn handle_event(&mut self, event_packet: EventPacket) -> EventBubbling {
-        match event_packet.kind {
-            EventKind::Le => {
-                let le_event = LeEventPacket::from_hci_bytes_complete(event_packet.data)
-                    .expect("Events originate in the STM32 firmware and should always be valid, and should be received by the flipper in full")
-                    .try_into()
-                    .expect("All events should be parsable into LeEvent");
-
+    fn handle_event<'a, 'b>(&'a mut self, event: Event<'b>) -> EventBubbling {
+        match event {
+            Event::Le(le_event) => {
                 match le_event {
                     LeEvent::LeConnectionComplete(data) => {
                         self.handle_connection_complete_event(data)
@@ -90,7 +85,7 @@ impl BleEventCallbacks for HandlerState {
                     _ => EventBubbling::ReturnForAdditionalProcessing,
                 }
             }
-            EventKind::Vendor => {
+            Event::Vendor(_) => {
                 todo!("vendor specific event")
             }
             _ => EventBubbling::ReturnForAdditionalProcessing,

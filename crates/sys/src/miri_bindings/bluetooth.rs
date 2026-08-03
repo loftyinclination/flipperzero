@@ -21,28 +21,16 @@ pub mod bt_inner {
     use core::mem::MaybeUninit;
     use core::ptr::NonNull;
 
-    enum ChannelState {
-        Full(*const HciEventPacket),
-        Processing,
-    }
-
     #[repr(packed, C)]
-    /// A type erased version of bt_hci::EventPacket
     pub struct HciEventPacket {
         pub kind: u8,
         pub len: u8,
-        // NOTE: this pointer is only here for type erasure, not for indirection. whatever is
-        // pointed to here must be part of the same allocation
-        pub inner: [u8; 1],
+        pub data: *const c_void,
     }
 
-    impl core::fmt::Debug for HciEventPacket {
-        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-            f.debug_struct("HciEventPacket")
-                .field("kind", &self.kind)
-                .field("len", &self.len)
-                .finish()
-        }
+    enum ChannelState {
+        Full(*const HciEventPacket),
+        Processing,
     }
 
     pub struct BtInner {
@@ -130,22 +118,26 @@ pub mod bt_inner {
                 alloc::format!("Receiving HCI Event packet: {:?}\n", event).as_bytes(),
             );
 
-            /*
-            event:
-            | type | data   | hci_uart_packet
-            | u8   | [u8;1] |
-                   | kind   | len | data   | hci_event_packet
-                   | u8     | u8  | [u8;1] |
-                                  | data.0 | data.1 | data.2 | ... | data.len - 1 | event_packet data
-            */
-
             #[repr(packed, C)]
             struct HciUartPacket {
                 _type: u8,
-                data: *const (),
+                data: [u8; 1],
             }
 
-            let mut hci_uart_packet = HciUartPacket {
+            #[repr(packed, C)]
+            struct HciUartStruct {
+                _type: u8,
+                data: *const HciEventPacket,
+            }
+
+            #[repr(packed, C)]
+            pub struct InnerHciEventPacket {
+                kind: u8,
+                len: u8,
+                inner: [u8; 1],
+            }
+
+            let mut hci_uart_packet = HciUartStruct {
                 _type: 0,
                 data: event.cast(),
             };
@@ -479,7 +471,7 @@ pub unsafe fn ble_event_dispatcher_unregister_svc_handler(handler: *mut GapSvcEv
 }
 
 #[repr(C)]
-#[derive(Debug, Copy, Clone)]
+#[derive(ufmt::derive::uDebug, Debug, Copy, Clone)]
 pub struct hci_request {
     pub ogf: u16,
     pub ocf: u16,

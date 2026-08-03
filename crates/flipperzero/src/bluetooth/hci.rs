@@ -146,12 +146,12 @@ pub mod miri {
         ($item:expr, event from $bt:ident) => {{
             use bt_hci::FixedSizeValue;
             use bt_hci::event::EventParams;
-            use core::ptr::NonNull;
+            use core::ptr;
             use flipperzero_sys::bt_inner::HciEventPacket;
 
             let item = $item;
 
-            let mut bt = $bt.lock(b"send bt message");
+            let mut bt = $bt.lock("send bt message");
 
             {
                 let msg = alloc::format!("Sending Bluetooth event: {}\n", stringify!($key));
@@ -166,10 +166,10 @@ pub mod miri {
                 T::EVENT_CODE
             }
 
-            let item = HciEventPacket {
+            let item = HciEventStruct {
                 kind: get_event_code(&item),
                 len: core::mem::size_of_val(&item) as u8,
-                inner: NonNull::from_ref(&item).cast(),
+                data: ptr::from_ref(item).cast(),
             };
 
             flipperzero_sys::BtInner::receive_hci_event(&mut bt, item);
@@ -180,18 +180,16 @@ pub mod miri {
             use bt_hci::event::le::LeEventParams;
             use bt_hci::event::{EventKind, EventParams};
             use bt_hci::{FixedSizeValue, WriteHci};
+            use core::{ffi::c_void, ops::DerefMut, ptr};
             use flipperzero_sys::bt_inner::HciEventPacket;
 
             unsafe extern "Rust" {
-                pub fn miri_alloc(size: usize, align: usize) -> *mut u8;
-                pub fn miri_dealloc(ptr: *mut u8, size: usize, align: usize);
-
                 pub safe fn miri_write_to_stdout(bytes: &[u8]);
             }
 
             let le_event = $event;
 
-            let mut bt = $bt.lock(b"send bt message");
+            let mut bt = $bt.lock("send bt message");
 
             fn get_subevent_code<'a, T: LeEventParams<'a>>(_t: &T) -> u8 {
                 T::SUBEVENT_CODE
@@ -210,47 +208,30 @@ pub mod miri {
             );
 
             #[repr(packed, C)]
-            struct HciLeEventPacket<'a> {
+            struct ConstructableHciLeEventPacket {
                 subevent_kind: u8,
-                data: &'a [u8],
+                data: *const c_void,
             }
 
-            let data = {
-                let data = alloc::boxed::Box::<[u8]>::new_zeroed_slice(le_event.size());
-                let mut data = unsafe { data.assume_init() };
+            let data = alloc::boxed::Box::<[u8]>::new_zeroed_slice(le_event.size());
+            let mut data = unsafe { data.assume_init() };
 
-                {
-                    let data: &mut [u8] = &mut data;
-                    le_event
-                        .write_hci(data)
-                        .expect("The slice was created with the size specified for the event");
-                }
+            le_event
+                .write_hci(data.deref_mut())
+                .expect("The slice was created with the size specified for the event");
 
-                data
-            };
-
-            let le_item = HciLeEventPacket {
+            let le_item = ConstructableHciLeEventPacket {
                 subevent_kind,
-                data: &data,
+                data: (&raw const data).cast(),
             };
 
-            let sizeof_hci_le_event_packet = core::mem::size_of_val(&le_item);
-            let sizeof_hci_event_packet = sizeof_hci_le_event_packet + 2;
-            let align = core::alloc::Layout::new::<HciEventPacket>().align();
+            let event = HciEventPacket {
+                kind: EventKind::Le.0,
+                len: 2,
+                data: (&raw const le_item).cast(),
+            };
 
-            let slice = unsafe { miri_alloc(sizeof_hci_event_packet, align) };
-
-            let event_packet_ptr = slice.cast::<HciEventPacket>();
-            unsafe { (&raw mut (*event_packet_ptr).kind).write(EventKind::Le.0) };
-            unsafe { (&raw mut (*event_packet_ptr).len).write(sizeof_hci_le_event_packet as u8) };
-
-            let data_ptr =
-                unsafe { (&raw mut (*event_packet_ptr).inner) }.cast::<HciLeEventPacket>();
-            unsafe { data_ptr.write(le_item) };
-
-            flipperzero_sys::BtInner::receive_hci_event(&mut bt, slice.cast());
-
-            unsafe { miri_dealloc(slice, sizeof_hci_event_packet, align) };
+            flipperzero_sys::BtInner::receive_hci_event(&mut bt, &raw const event);
 
             miri_write_to_stdout(b"Finished sending BLuetooth LE event\n");
         }};

@@ -68,7 +68,7 @@ crc32fast = { version = "1", default-features = false }
 [features]
 
 default = ["embedded-graphics", "not-miri"]
-miri = ["embedded-graphics"]
+miri = ["embedded-graphics", "bt-hci/test"]
 
 #! ## Core features
 
