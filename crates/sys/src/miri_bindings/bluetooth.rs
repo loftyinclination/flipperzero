@@ -63,8 +63,6 @@ pub mod bt_inner {
                 unsafe { miri_thread_spawn(thread_start, bt_ptr as *mut _) }
             };
 
-            let _ = unsafe { miri_set_thread_name(thread_id, c"bt gap service".as_ptr()) };
-
             {
                 bt.lock("spawn").thread_id = thread_id;
             }
