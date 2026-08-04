@@ -472,7 +472,7 @@ pub struct FuriLogLevel(pub core::ffi::c_uchar);
 
 #[doc = "Get log level\n\n # Returns\n\nThe furi log level."]
 pub unsafe fn furi_log_get_level() -> FuriLogLevel {
-    todo!()
+    FuriLogLevelWarn
 }
 #[doc = "Print log record\n\n # Arguments\n\n* `level` -\n * `tag` -\n * `format` -\n * `...` -"]
 pub unsafe fn furi_log_print_format(
