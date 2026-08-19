@@ -150,3 +150,4 @@ required-features = ["alloc", "not-miri"]
 
 [[example]]
 name = "view_dispatcher"
+required-features = ["not-miri"]
