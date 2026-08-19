@@ -43,10 +43,13 @@ jobs:
       run:
         working-directory: ${{ inputs.target }}
     steps:
-      - name: Build examples under MIRI
-        env:
-          RUSTFLAGS: "--cfg miri"
-        run: cargo check --no-default-features --target thumbv7em-none-eabihf --release --verbose --all
+    - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+    - run: rustup override set nightly
+    - run: rustup component add miri
+    - name: Build examples under MIRI
+      env:
+        RUSTFLAGS: "--cfg miri"
+      run: cargo check --no-default-features --target thumbv7em-none-eabihf --release --verbose --all
   run-miri-examples:
     name: Run MIRI on examples
     runs-on: ubuntu-latest
@@ -58,6 +61,9 @@ jobs:
       matrix:
         example: ${{ fromJSON(needs.get-miri-examples.outputs.miri-examples) }}
     steps:
+    - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+    - run: rustup override set nightly
+    - run: rustup component add miri
     - name: Run Miri
       run: |
         echo "${{ matrix.example }}"
