@@ -56,7 +56,7 @@ pub unsafe fn view_port_alloc() -> *mut ViewPort {
 }
 
 #[doc = "ViewPort deallocator\n\n Ensure that view_port was unregistered in GUI system before use.\n\n # Arguments\n\n* `view_port` - ViewPort instance"]
-pub unsafe fn view_port_free(view_port: *mut SpinLock<ViewPortInner>) {
+pub unsafe fn view_port_free(view_port: *mut ViewPort) {
     let view_port = unsafe { Box::from_raw(view_port) };
     drop(view_port);
 }
