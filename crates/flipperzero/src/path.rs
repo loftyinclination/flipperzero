@@ -5,6 +5,14 @@ use core::ffi::CStr;
 use crate::furi::string::FuriString;
 
 /// A slice of a path (akin to [`str`]).
+///
+/// A path that starts with '/data/' will, on using any of the [crate::storage::Storage] functions,
+/// be changed to '/ext/apps_data/%APP_ID%' where %APP_ID% is gotten from the current thread ID and
+/// the application manifest name.
+///
+/// A path that starts with '/assets/' will, on using any of the [crate::storage::Storage]
+/// functions, be changed to '/ext/apps_assets/%APP_ID%' where %APP_ID% is gotten from the current
+/// thread ID and the application manifest name.
 #[repr(transparent)]
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
 pub struct Path(CStr);
