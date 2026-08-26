@@ -14,6 +14,10 @@ pub struct Storage {
     record: UnsafeRecord<sys::Storage>,
 }
 
+/// SAFETY: Storage methods either take locks or send queue commands via a message queue, and so it is
+/// safe to send this type (no different to opening the service again on the other thread)
+unsafe impl Send for Storage {}
+
 impl Storage {
     pub const NAME: &CStr = c"storage";
 
@@ -175,16 +179,24 @@ impl OpenOptions {
 /// Basic, unbuffered file handle
 #[allow(dead_code)]
 pub struct File {
-    raw: NonNull<sys::File>,
+    raw: FileInner,
     storage: Storage,
 }
+
+struct FileInner(NonNull<sys::File>);
+
+/// SAFETY: File methods either take locks or send queue commands via a message queue, and so it is
+/// safe to send this type (no different to opening the service again on the other thread)
+unsafe impl Send for FileInner {}
 
 impl File {
     pub(crate) fn new() -> Self {
         let storage = Storage::open();
+        // SAFETY: Alloc always returns a valid non-null pointer or `furi_panic`s.
+        let raw = unsafe { NonNull::new_unchecked(sys::storage_file_alloc(storage.as_ptr())) };
+
         Self {
-            // SAFETY: Alloc always returns a valid non-null pointer or `furi_panic`s.
-            raw: unsafe { NonNull::new_unchecked(sys::storage_file_alloc(storage.as_ptr())) },
+            raw: FileInner(raw),
             storage,
         }
     }
@@ -222,7 +234,7 @@ impl File {
     /// This pointer must not be `free`d or otherwise invalidated.
     /// It must not be referenced after `File` as been dropped.
     pub fn as_ptr(&self) -> *mut sys::File {
-        self.raw.as_ptr()
+        self.raw.0.as_ptr()
     }
 
     /// Get last error.
