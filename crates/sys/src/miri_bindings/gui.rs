@@ -67,6 +67,11 @@ pub(crate) mod gui_inner {
     use crate::miri_bindings::lock::SpinLock;
     use alloc::sync::Arc;
     use core::ptr::NonNull;
+    use core::sync::atomic::{AtomicU8, Ordering};
+
+    const NOT_RUNNING: u8 = 0;
+    const SPAWNED: u8 = 1;
+    const RUNNING: u8 = 2;
 
     #[repr(C)]
     pub struct GuiInner {
@@ -76,6 +81,7 @@ pub(crate) mod gui_inner {
         input_channel: Option<InputEvent>,
         request_redraw: bool,
         pub stop: bool,
+        started: AtomicU8,
 
         pub view_port: Option<NonNull<ViewPort>>,
     }
@@ -92,6 +98,7 @@ pub(crate) mod gui_inner {
                 input_channel: None,
                 request_redraw: false,
                 stop: false,
+                started: AtomicU8::new(NOT_RUNNING),
                 view_port: None,
             };
             let gui = Arc::new(SpinLock::new(gui));
@@ -104,12 +111,39 @@ pub(crate) mod gui_inner {
 
             {
                 gui.lock().thread_id = thread_id;
+                loop {
+                    let gui = gui.lock();
+                    if gui
+                        .started
+                        .compare_exchange_weak(
+                            SPAWNED,
+                            RUNNING,
+                            Ordering::SeqCst,
+                            Ordering::SeqCst,
+                        )
+                        .is_ok()
+                    {
+                        break;
+                    }
+                }
             }
 
             extern "Rust" fn thread_start(data: *mut ()) {
                 // SAFETY: data is guaranteed to have been created from an arc, just above
                 let gui: Arc<SpinLock<GuiInner>> = unsafe { Arc::from_raw(data as *const _) };
-                debug_assert_eq!(Arc::strong_count(&gui), 2, "immediately post gui thread spawn");
+
+                let count = Arc::strong_count(&gui);
+                debug_assert_eq!(
+                    count,
+                    2,
+                    "[gui service thread (here), GuiInner::spawn]",
+                );
+
+                // Unblock the spawning thread
+                gui.lock()
+                    .started
+                    .compare_exchange(NOT_RUNNING, SPAWNED, Ordering::SeqCst, Ordering::SeqCst)
+                    .expect("The spawning thread is the only other thread that may change this value, and that will never change the value from NOT_RUNNING");
 
                 loop {
                     let gui = &mut gui.lock();
@@ -128,6 +162,11 @@ pub(crate) mod gui_inner {
 
                     miri_spin_loop();
                 }
+
+                gui.lock()
+                    .started
+                    .compare_exchange(RUNNING, NOT_RUNNING, Ordering::SeqCst, Ordering::SeqCst)
+                    .expect("Thread can only be stopped while running");
             }
 
             gui
