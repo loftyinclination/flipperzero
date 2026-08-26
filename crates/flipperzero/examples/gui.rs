@@ -21,6 +21,7 @@ use core::time::Duration;
 use flipperzero::furi::thread::sleep;
 use flipperzero_rt::{entry, manifest};
 use flipperzero_sys::furi::UnsafeRecord;
+use flipperzero_sys::miri_assert_record_count;
 use flipperzero_sys::{self as sys, Gui};
 
 const FULLSCREEN: sys::GuiLayer = sys::GuiLayerFullscreen;
@@ -44,38 +45,12 @@ fn main(_args: Option<&CStr>) -> i32 {
 
         {
             let gui: UnsafeRecord<Gui> = UnsafeRecord::open(c"gui");
-            #[cfg(miri)]
-            debug_assert_eq!(
-                {
-                    extern crate alloc;
-                    use alloc::sync::Arc;
-
-                    let gui: Arc<Gui> = Arc::from_raw(gui.as_ptr());
-                    let count = Arc::strong_count(&gui);
-                    // Intentionally leak again?
-                    let _gui = Arc::into_raw(gui);
-
-                    count
-                },
-                3,
-                "[unsafe record, static cell, gui service thread]"
-            );
+            miri_assert_record_count!(gui, 3, "[unsafe record, static cell, gui service thread]");
 
             sys::gui_add_view_port(gui.as_ptr(), view_port, FULLSCREEN);
 
-            #[cfg(miri)]
-            debug_assert_eq!(
-                {
-                    extern crate alloc;
-                    use alloc::sync::Arc;
-
-                    let gui: Arc<Gui> = Arc::from_raw(gui.as_ptr());
-                    let count = Arc::strong_count(&gui);
-                    // Intentionally leak again?
-                    let _gui = Arc::into_raw(gui);
-
-                    count
-                },
+            miri_assert_record_count!(
+                gui,
                 4,
                 "[unsafe record, static cell, gui service thread, view_port reference]"
             );
@@ -84,22 +59,7 @@ fn main(_args: Option<&CStr>) -> i32 {
             sys::gui_remove_view_port(gui.as_ptr(), view_port);
             sys::view_port_enabled_set(view_port, false);
 
-            #[cfg(miri)]
-            debug_assert_eq!(
-                {
-                    extern crate alloc;
-                    use alloc::sync::Arc;
-
-                    let gui: Arc<Gui> = Arc::from_raw(gui.as_ptr());
-                    let count = Arc::strong_count(&gui);
-                    // Intentionally leak again?
-                    let _gui = Arc::into_raw(gui);
-
-                    count
-                },
-                3,
-                "[unsafe record, static cell, gui service thread]"
-            );
+            miri_assert_record_count!(gui, 3, "[unsafe record, static cell, gui service thread]");
         }
         sys::view_port_free(view_port);
     }
