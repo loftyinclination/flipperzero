@@ -1,3 +1,4 @@
+use alloc::io::{Error as IoError, ErrorKind};
 use core::ffi::CStr;
 use core::fmt;
 
@@ -46,6 +47,24 @@ pub enum Error {
     #[non_exhaustive]
     #[doc(hidden)]
     Uncategorized(sys::FS_Error),
+}
+
+impl From<Error> for IoError {
+    fn from(value: Error) -> Self {
+        match value {
+            Error::NotReady => IoError::from(ErrorKind::ResourceBusy),
+            Error::Exists => IoError::from(ErrorKind::AlreadyExists),
+            Error::NotExists => IoError::from(ErrorKind::NotFound),
+            Error::InvalidParameter => IoError::from(ErrorKind::InvalidInput),
+            Error::Denied => IoError::from(ErrorKind::PermissionDenied),
+            Error::InvalidName => IoError::from(ErrorKind::InvalidFilename),
+            Error::Internal => IoError::other("Internal"),
+            Error::NotImplemented => IoError::from(ErrorKind::Unsupported),
+            Error::AlreadyOpen => IoError::other("Already Open"),
+            Error::WriteZero => IoError::from(ErrorKind::WriteZero),
+            Error::Uncategorized(_fs_error) => IoError::other("Unknown error"),
+        }
+    }
 }
 
 impl Error {
@@ -106,24 +125,10 @@ impl ufmt::uDisplay for Error {
     }
 }
 
-/// Trait comparable to `std::Read` for the Flipper Zero API
-pub trait Read {
-    /// Reads some bytes from this source into the given buffer, returning how many bytes
-    /// were read.
-    fn read(&mut self, buf: &mut [u8]) -> Result<usize>;
-
-    /// Reads all bytes until EOF in this source, appending them to `buf``.
-    ///
-    /// If successful, this function returns the number of bytes which were read and appended to `buf``.
-    fn read_to_string(&mut self, string: &mut FuriString) -> Result<usize> {
-        default_read_to_string(self, string)
-    }
-}
-
-pub(crate) fn default_read_to_string<R: Read + ?Sized>(
+pub(crate) fn default_read_to_string<R: alloc::io::Read + ?Sized>(
     r: &mut R,
     string: &mut FuriString,
-) -> Result<usize> {
+) -> alloc::io::Result<usize> {
     let mut total_bytes_read = 0;
 
     let mut buf = [0u8; DEFAULT_BUF_SIZE];
@@ -141,59 +146,4 @@ pub(crate) fn default_read_to_string<R: Read + ?Sized>(
     }
 
     Ok(total_bytes_read)
-}
-
-/// Trait comparable to `std::Seek` for the Flipper Zero API
-pub trait Seek {
-    fn seek(&mut self, pos: SeekFrom) -> Result<usize>;
-
-    fn rewind(&mut self) -> Result<()> {
-        self.seek(SeekFrom::Start(0))?;
-        Ok(())
-    }
-
-    fn stream_len(&mut self) -> Result<usize> {
-        let old_pos = self.stream_position()?;
-        let len = self.seek(SeekFrom::End(0))?;
-
-        // Avoid seeking a third time when we were already at the end of the
-        // stream. The branch is usually way cheaper than a seek operation.
-        if old_pos != len {
-            self.seek(SeekFrom::Start(
-                old_pos.try_into().map_err(|_| Error::InvalidParameter)?,
-            ))?;
-        }
-
-        Ok(len)
-    }
-
-    fn stream_position(&mut self) -> Result<usize> {
-        self.seek(SeekFrom::Current(0))
-    }
-}
-
-/// Trait comparable to `std::Write` for the Flipper Zero API
-pub trait Write {
-    fn write(&mut self, buf: &[u8]) -> Result<usize>;
-    fn flush(&mut self) -> Result<()>;
-
-    fn write_all(&mut self, mut buf: &[u8]) -> Result<()> {
-        while !buf.is_empty() {
-            match self.write(buf) {
-                Ok(0) => return Err(Error::WriteZero),
-                Ok(n) => buf = &buf[n..],
-                Err(e) => return Err(e),
-            }
-        }
-        Ok(())
-    }
-}
-
-/// Enumeration of possible methods to seek within an I/O object.
-///
-/// It is used by the Seek trait.
-pub enum SeekFrom {
-    Start(u64),
-    End(i64),
-    Current(i64),
 }

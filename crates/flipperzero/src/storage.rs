@@ -5,8 +5,9 @@ use flipperzero_sys::furi::UnsafeRecord;
 use flipperzero_sys::{self as sys, HasFlag};
 
 use crate::furi::string::FuriString;
-use crate::io::*;
 use crate::path::Path;
+use crate::io::Error;
+use alloc::io::{Seek, Read, Write, SeekFrom, Result, Error as IoError};
 
 /// Storage service handle.
 #[derive(Clone)]
@@ -171,7 +172,7 @@ impl OpenOptions {
         } else {
             // Per docs, "you need to close the file even if the open operation
             // failed," but this is handled by `Drop`.
-            Err(Error::from_sys(f.get_raw_error()).unwrap())
+            Err(Error::from_sys(f.get_raw_error()).unwrap().into())
         }
     }
 }
@@ -242,6 +243,14 @@ impl File {
         // SAFETY: Pointer is always non-null and valid `sys::File`
         unsafe { sys::storage_file_get_error(self.as_ptr()) }
     }
+
+    fn read_to_furi_string(&mut self, string: &mut FuriString) -> Result<usize> {
+        let file_len = self.stream_len()?;
+
+        string.reserve(file_len as usize);
+
+        crate::io::default_read_to_string(self, string)
+    }
 }
 
 impl Drop for File {
@@ -261,22 +270,15 @@ impl Read for File {
         };
 
         match Error::from_sys(self.get_raw_error()) {
-            Some(err) => Err(err),
+            Some(err) => Err(err.into()),
             None => Ok(bytes_read),
         }
     }
 
-    fn read_to_string(&mut self, string: &mut FuriString) -> Result<usize> {
-        let file_len = self.stream_len()?;
-
-        string.reserve(file_len);
-
-        default_read_to_string(self, string)
-    }
 }
 
 impl Seek for File {
-    fn seek(&mut self, pos: SeekFrom) -> Result<usize> {
+    fn seek(&mut self, pos: SeekFrom) -> Result<u64> {
         let (from_start, offset) = match pos {
             SeekFrom::Start(n) => (true, n.try_into().map_err(|_| Error::InvalidParameter)?),
             SeekFrom::Current(n) => (false, n.try_into().map_err(|_| Error::InvalidParameter)?),
@@ -291,7 +293,7 @@ impl Seek for File {
                     true,
                     (file_length - n)
                         .try_into()
-                        .map_err(|_| Error::InvalidParameter)?,
+                        .map_err(|_| IoError::from(alloc::io::ErrorKind::InvalidInput))?
                 )
             }
         };
@@ -301,7 +303,7 @@ impl Seek for File {
                     .try_into()
                     .map_err(|_| Error::InvalidParameter)?)
             } else {
-                Err(Error::from_sys(self.get_raw_error()).unwrap())
+                Err(Error::from_sys(self.get_raw_error()).unwrap().into())
             }
         }
     }
@@ -310,7 +312,7 @@ impl Seek for File {
         self.seek(SeekFrom::Start(0)).map(|_| {})
     }
 
-    fn stream_len(&mut self) -> Result<usize> {
+    fn stream_len(&mut self) -> Result<u64> {
         Ok(unsafe {
             sys::storage_file_size(self.as_ptr())
                 .try_into()
@@ -318,7 +320,7 @@ impl Seek for File {
         })
     }
 
-    fn stream_position(&mut self) -> Result<usize> {
+    fn stream_position(&mut self) -> Result<u64> {
         Ok(unsafe {
             sys::storage_file_tell(self.as_ptr())
                 .try_into()
@@ -334,7 +336,7 @@ impl Write for File {
         };
 
         match Error::from_sys(self.get_raw_error()) {
-            Some(err) => Err(err),
+            Some(err) => Err(err.into()),
             None => Ok(bytes_written),
         }
     }
@@ -357,7 +359,7 @@ impl Default for File {
 pub fn read_to_string(path: impl AsRef<Path>) -> Result<FuriString> {
     let mut string = FuriString::new();
 
-    File::open(path)?.read_to_string(&mut string)?;
+    File::open(path)?.read_to_furi_string(&mut string)?;
 
     Ok(string)
 }

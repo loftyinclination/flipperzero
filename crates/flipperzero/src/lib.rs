@@ -6,6 +6,8 @@
 
 #![feature(get_mut_unchecked)]
 #![feature(box_as_ptr)]
+#![feature(alloc_io)]
+#![feature(seek_stream_len)]
 #![feature(associated_type_defaults)]
 #![no_std]
 #![cfg_attr(all(test, not(miri)), no_main)]
