@@ -47,6 +47,8 @@ pub enum Error {
     #[non_exhaustive]
     #[doc(hidden)]
     Uncategorized(sys::FS_Error),
+
+    Unmapped,
 }
 
 impl From<Error> for IoError {
@@ -63,6 +65,7 @@ impl From<Error> for IoError {
             Error::AlreadyOpen => IoError::other("Already Open"),
             Error::WriteZero => IoError::from(ErrorKind::WriteZero),
             Error::Uncategorized(_fs_error) => IoError::other("Unknown error"),
+            Error::Unmapped => IoError::other("Unknown error"),
         }
     }
 }
@@ -78,7 +81,7 @@ impl From<IoError> for Error {
             ErrorKind::InvalidFilename => Error::InvalidName,
             ErrorKind::Unsupported => Error::NotImplemented,
             ErrorKind::WriteZero => Error::WriteZero,
-            _ => Error::Uncategorized(flipperzero_sys::FS_Error(u8::MAX)),
+            _ => Error::Unmapped,
         }
     }
 }
