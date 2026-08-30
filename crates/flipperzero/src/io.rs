@@ -67,6 +67,22 @@ impl From<Error> for IoError {
     }
 }
 
+impl From<IoError> for Error {
+    fn from(value: IoError) -> Self {
+        match value.kind() {
+            ErrorKind::ResourceBusy => Error::NotReady,
+            ErrorKind::AlreadyExists => Error::Exists,
+            ErrorKind::NotFound => Error::NotExists,
+            ErrorKind::InvalidInput => Error::InvalidParameter,
+            ErrorKind::PermissionDenied => Error::Denied,
+            ErrorKind::InvalidFilename => Error::InvalidName,
+            ErrorKind::Unsupported => Error::NotImplemented,
+            ErrorKind::WriteZero => Error::WriteZero,
+            _ => Error::Uncategorized(flipperzero_sys::FS_Error(u8::MAX)),
+        }
+    }
+}
+
 impl Error {
     pub fn to_sys(&self) -> Option<sys::FS_Error> {
         match self {
