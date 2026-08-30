@@ -244,6 +244,10 @@ impl File {
         unsafe { sys::storage_file_get_error(self.as_ptr()) }
     }
 
+    pub fn get_error(&self) -> Option<Error> {
+        Error::from_sys(self.get_raw_error())
+     }
+
     fn read_to_furi_string(&mut self, string: &mut FuriString) -> Result<usize> {
         let file_len = self.stream_len()?;
 
