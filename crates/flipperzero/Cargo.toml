@@ -34,7 +34,11 @@ lock_api = "0.4"
 
 # Bluetooth Events
 # bt-hci = "0.8.0"
-bt-hci = { path = "/home/lofty/Documents/Creative/Programming/Rust/bt-hci/", features = ["ufmt"] }
+bt-hci = {
+    git = "https://github.com/loftyinclination/bt-hci",
+    branch = "stm32",
+    features = ["ufmt"]
+}
 
 uuid = { version = "1.16", default-features = false }
 
