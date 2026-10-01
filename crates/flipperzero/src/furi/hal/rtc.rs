@@ -13,7 +13,7 @@ pub fn datetime() -> DateTime {
         sys::furi_hal_rtc_get_datetime(datetime.as_mut_ptr());
     }
 
-    unsafe { datetime.assume_init() }
+    DateTime(unsafe { datetime.assume_init() })
 }
 
 /// Set RTC Date Time.

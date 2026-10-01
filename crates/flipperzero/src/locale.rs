@@ -61,7 +61,7 @@ pub fn format_time_ex(datetime: &DateTime, format: TimeFormat, show_seconds: boo
     unsafe {
         sys::locale_format_time(
             string.as_mut_ptr(),
-            datetime as *const _,
+            datetime.0 as *const _,
             format,
             show_seconds,
         )
@@ -91,7 +91,7 @@ pub fn format_date_ex(datetime: &DateTime, format: DateFormat, separator: &CStr)
     unsafe {
         sys::locale_format_date(
             string.as_mut_ptr(),
-            datetime as *const _,
+            datetime.0 as *const _,
             format,
             separator.as_ptr(),
         )
